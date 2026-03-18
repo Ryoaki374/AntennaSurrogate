@@ -69,6 +69,29 @@ except ImportError:
     ExactMarginalLogLikelihood = None
 
 
+try:
+    import torch
+    from botorch.acquisition.analytic import ExpectedImprovement, UpperConfidenceBound
+    from botorch.acquisition.fixed_feature import FixedFeatureAcquisitionFunction
+    from botorch.fit import fit_gpytorch_mll
+    from botorch.models import SingleTaskGP
+    from botorch.models.transforms.input import Normalize
+    from botorch.models.transforms.outcome import Standardize
+    from botorch.optim import optimize_acqf
+    from gpytorch.mlls import ExactMarginalLogLikelihood
+except ImportError:
+    torch = None
+    ExpectedImprovement = None
+    UpperConfidenceBound = None
+    FixedFeatureAcquisitionFunction = None
+    fit_gpytorch_mll = None
+    SingleTaskGP = None
+    Normalize = None
+    Standardize = None
+    optimize_acqf = None
+    ExactMarginalLogLikelihood = None
+
+
 class GaussianProcess:
     def __init__(self, config: AppConfig,):
         self.cfg = config
@@ -233,11 +256,13 @@ class GaussianProcess:
         param_names,
         lower_bounds,
         upper_bounds,
+        objective_func=None,
         acq_func=None,
         acq_params=None,
         active_indices: Optional[List[int]] = None,
         fixed_point: Optional[np.ndarray] = None,
         n_restarts: int = 25,
+        **kwargs,
     ) -> Tuple[np.ndarray, dict]:
         X_sample = np.asarray([[row[name] for name in param_names] for row in history_data], dtype=float)
         y_sample = np.asarray([[row["S11"]] for row in history_data], dtype=float)
