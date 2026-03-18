@@ -1,0 +1,61 @@
+# _config.toml
+
+# ------------------------------------------------------------  IO
+[io]
+    filename_input  = "params.csv"      # temporary csv file for setting HFSS params
+    filename_output = "results.csv"     # csv file for storing results
+    filename_temp   = "temp_hfss_export.csv" # temporary csv file for passing results
+
+# ------------------------------------------------------------  GP Hyperparams
+[opt]
+    kernel_type     = "RBF" # kernel name
+    length_scale    = 1.0
+    noise_std       = 0.01
+    noise_var       = 0.0001
+
+# ------------------------------------------------------------  HFSS simulation
+#[hfss]
+#    n_simulation    = 3  # maximum number of smulations per each iteration
+#    n_repeats       = 1   # total nuber of iterations
+#    n_init          = 1
+#    n_params        = 5
+#    lower_bounds    = [-10, 1, 2, 2, 1,]
+#    upper_bounds    = [-2, 5, 8, 8, 6,]
+#    param_names     = ['c', 'n', 'a', 'b', 'k']
+#    param_units     = ["mm", "", 'mm', 'mm', '']
+#    filename_models = ["Backshort.step", "Finshape.step"]
+
+[hfss]
+    n_simulation = 50
+    n_repeats = 1
+    n_init = 15
+    n_params = 5
+    group_order = ["A", "B"]
+    filename_models = ["Backshort.step", "Finshape.step"]
+
+    [hfss.param_groups.A]
+    param_names  = ["c", "n"]
+    param_units  = ["mm", ""]
+    lower_bounds = [-10, 1]
+    upper_bounds = [-2, 5]
+    baseline     = [-6.0, 3.0]
+    vary         = true
+
+    [hfss.param_groups.B]
+    param_names  = ["a", "b", "k"]
+    param_units  = ["mm", "mm", ""]
+    lower_bounds = [2, 2, 1]
+    upper_bounds = [8, 8, 6]
+    baseline     = [4.0, 6.0, 2.0]
+    vary         = true
+
+
+# ------------------------------------------------------------  Synthetic Test Function
+[test]
+    n_simulation    = 130
+    n_repeats       = 1     # total nuber of iterations
+    n_init          = 30
+    n_params        = 10
+    lower_bounds    = [-32, -32, -32, -32, -32, -32, -32, -32, -32, -32]
+    upper_bounds    = [32, 32, 32, 32, 32, 32, 32, 32, 32, 32]
+    param_names     = ['x1', 'x2', 'x3', 'x4', 'x5', 'x6', 'x7', 'x8', 'x9', 'x10',]

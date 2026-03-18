@@ -1,0 +1,12 @@
+{
+    "n_simulation": 50,
+    "n_repeats": 1,
+    "WATCH_DIR": "T:\\RAkizawa\\HFSS_C2WR10\\src\\0317195354",
+    "INPUT_FILE": "T:\\RAkizawa\\HFSS_C2WR10\\src\\0317195354\\params.csv",
+    "MODEL_FILE": [
+        "T:\\RAkizawa\\HFSS_C2WR10\\src\\0317195354\\Backshort.step",
+        "T:\\RAkizawa\\HFSS_C2WR10\\src\\0317195354\\Finshape.step"
+    ],
+    "RESULTS_FILE": "T:\\RAkizawa\\HFSS_C2WR10\\src\\0317195354\\results.csv",
+    "TEMP_FILE": "T:\\RAkizawa\\HFSS_C2WR10\\src\\0317195354\\temp_hfss_export.csv"
+}
