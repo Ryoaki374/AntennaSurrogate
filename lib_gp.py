@@ -25,6 +25,27 @@ except ImportError:
     ExactMarginalLogLikelihood = None
 
 
+try:
+    import torch
+    from botorch.acquisition.analytic import ExpectedImprovement, UpperConfidenceBound
+    from botorch.acquisition.fixed_feature import FixedFeatureAcquisitionFunction
+    from botorch.fit import fit_gpytorch_mll
+    from botorch.models import SingleTaskGP
+    from botorch.models.transforms.outcome import Standardize
+    from botorch.optim import optimize_acqf
+    from gpytorch.mlls import ExactMarginalLogLikelihood
+except ImportError:
+    torch = None
+    ExpectedImprovement = None
+    UpperConfidenceBound = None
+    FixedFeatureAcquisitionFunction = None
+    fit_gpytorch_mll = None
+    SingleTaskGP = None
+    Standardize = None
+    optimize_acqf = None
+    ExactMarginalLogLikelihood = None
+
+
 class GaussianProcess:
     def __init__(self, config: AppConfig,):
         self.cfg = config
@@ -35,6 +56,7 @@ class GaussianProcess:
         self.train_Y_model = None
         self.dtype = None
         self.device = None
+        self.length_scale = None
 
     def _require_botorch(self) -> None:
         if torch is None or SingleTaskGP is None:
@@ -68,7 +90,7 @@ class GaussianProcess:
 
         return float(self.cfg.opt.length_scale)
 
-    def run_gp(self, X_sample, y_sample, current_gamma):
+    def run_gp(self, X_sample, y_sample):
         train_X, train_Y = self._to_train_tensors(X_sample, y_sample)
 
         # Minimize S11 -> maximize negative S11 inside BoTorch.
@@ -89,15 +111,7 @@ class GaussianProcess:
         self.train_X = train_X
         self.train_Y = train_Y
         self.train_Y_model = train_Y_model
-
-        optimized_length_scale = self._extract_length_scale()
-
-        # Compatibility return values for existing notebook / plotting flow.
-        K_opt = kernel(np.asarray(X_sample, dtype=float), np.asarray(X_sample, dtype=float), optimized_length_scale)
-        Ky_opt = K_opt + self.cfg.opt.noise_var * np.identity(len(X_sample)) + 1e-6 * np.identity(len(X_sample))
-        Ky_opt_inv = np.linalg.inv(Ky_opt)
-
-        return optimized_length_scale, K_opt, Ky_opt, Ky_opt_inv, mll
+        self.length_scale = self._extract_length_scale()
 
     def _build_acquisition(self, acq_func, acq_params: dict):
         name = getattr(acq_func, "__name__", "") if acq_func is not None else ""
@@ -119,8 +133,6 @@ class GaussianProcess:
         acq_func,
         X_sample,
         y_sample,
-        Ky_inv,
-        gamma,
         lower_bounds,
         upper_bounds,
         acq_params,
@@ -181,6 +193,41 @@ class GaussianProcess:
         )
         best_x = _reshapeX(fixed_point, active, best_z.detach().cpu().view(-1).double().numpy())
         return best_x, float(best_acq_value.detach().cpu().view(-1)[0].item())
+
+    def search(
+        self,
+        history_data,
+        param_names,
+        lower_bounds,
+        upper_bounds,
+        acq_func=None,
+        acq_params=None,
+        active_indices: Optional[List[int]] = None,
+        fixed_point: Optional[np.ndarray] = None,
+        n_restarts: int = 25,
+    ) -> Tuple[np.ndarray, dict]:
+        X_sample = np.asarray([[row[name] for name in param_names] for row in history_data], dtype=float)
+        y_sample = np.asarray([[row["S11"]] for row in history_data], dtype=float)
+
+        self.run_gp(X_sample, y_sample)
+
+        if acq_func is None:
+            acq_func = lower_confidence_bound
+        if acq_params is None:
+            acq_params = {"kappa": 2.0}
+
+        x_new, acq_value = self.optAcquisition(
+            acq_func=acq_func,
+            X_sample=X_sample,
+            y_sample=y_sample,
+            lower_bounds=lower_bounds,
+            upper_bounds=upper_bounds,
+            acq_params=acq_params,
+            active_indices=active_indices,
+            fixed_point=fixed_point,
+            n_restarts=n_restarts,
+        )
+        return x_new, {"acq": acq_value, "length_scale": self.length_scale}
 
 
 # ==============================================================================
