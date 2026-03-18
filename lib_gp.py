@@ -46,6 +46,29 @@ except ImportError:
     ExactMarginalLogLikelihood = None
 
 
+try:
+    import torch
+    from botorch.acquisition.analytic import ExpectedImprovement, UpperConfidenceBound
+    from botorch.acquisition.fixed_feature import FixedFeatureAcquisitionFunction
+    from botorch.fit import fit_gpytorch_mll
+    from botorch.models import SingleTaskGP
+    from botorch.models.transforms.input import Normalize
+    from botorch.models.transforms.outcome import Standardize
+    from botorch.optim import optimize_acqf
+    from gpytorch.mlls import ExactMarginalLogLikelihood
+except ImportError:
+    torch = None
+    ExpectedImprovement = None
+    UpperConfidenceBound = None
+    FixedFeatureAcquisitionFunction = None
+    fit_gpytorch_mll = None
+    SingleTaskGP = None
+    Normalize = None
+    Standardize = None
+    optimize_acqf = None
+    ExactMarginalLogLikelihood = None
+
+
 class GaussianProcess:
     def __init__(self, config: AppConfig,):
         self.cfg = config
@@ -78,6 +101,15 @@ class GaussianProcess:
 
         return train_X, train_Y
 
+
+    def _get_input_bounds(self, dims: int):
+        lower = np.asarray(self.cfg.hfss.lower_bounds, dtype=np.float64)
+        upper = np.asarray(self.cfg.hfss.upper_bounds, dtype=np.float64)
+        if len(lower) != dims or len(upper) != dims:
+            raise ValueError("Config bounds do not match the training input dimension.")
+        bounds = np.vstack([lower, upper])
+        return torch.tensor(bounds, dtype=self.dtype, device=self.device)
+
     def _extract_length_scale(self) -> float:
         model = self.model
         covar_module = getattr(model, "covar_module", None)
@@ -99,6 +131,7 @@ class GaussianProcess:
         model = SingleTaskGP(
             train_X=train_X,
             train_Y=train_Y_model,
+            input_transform=Normalize(d=train_X.shape[-1], bounds=self._get_input_bounds(train_X.shape[-1])),
             outcome_transform=Standardize(m=1),
         )
         mll = ExactMarginalLogLikelihood(model.likelihood, model)
