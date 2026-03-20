@@ -1,26 +1,11 @@
 from lib_config import AppConfig
 import numpy as np
 from typing import Optional, List, Tuple
-from deap import base, creator, tools, benchmarks, cma
-
-if not hasattr(creator, "AntennaFitnessMin"):
-    creator.create("AntennaFitnessMin", base.Fitness, weights=(-1.0,))
-if not hasattr(creator, "AntennaIndividual"):
-    creator.create("AntennaIndividual", list, fitness=creator.AntennaFitnessMin)
 
 
 class RealCodedGA:
     def __init__(self, config: AppConfig):
         self.cfg = config
-
-    def _build_base_point(self, best_x, active_indices, fixed_point):
-        base_x = np.asarray(best_x, dtype=float).copy()
-        if active_indices is None or fixed_point is None:
-            return base_x
-        x = np.asarray(fixed_point, dtype=float).copy()
-        active = list(active_indices)
-        x[active] = base_x[active]
-        return x
 
     def search(
         self,
@@ -31,66 +16,30 @@ class RealCodedGA:
         objective_func=None,
         active_indices: Optional[List[int]] = None,
         fixed_point: Optional[np.ndarray] = None,
-        sigma: Optional[float] = None,
-        lambda_: Optional[int] = None,
+        elite_size: int = 4,
+        mutation_scale: float = 0.05,
         **kwargs,
     ) -> Tuple[np.ndarray, dict]:
-        if objective_func is None:
-            raise ValueError("RealCodedGA requires objective_func for CMA-ES search.")
-
         lower = np.asarray(lower_bounds, dtype=float)
         upper = np.asarray(upper_bounds, dtype=float)
         dims = len(lower)
-        active = list(range(dims)) if active_indices is None else list(active_indices)
+        rows = sorted(history_data, key=lambda row: row["S11"])
+        elites = rows[: max(2, min(elite_size, len(rows)))]
 
-        best_row = min(history_data, key=lambda row: row["S11"])
-        best_x = np.asarray([best_row[name] for name in param_names], dtype=float)
-        base_x = self._build_base_point(best_x, active_indices, fixed_point)
+        p1 = np.asarray([elites[np.random.randint(len(elites))][name] for name in param_names], dtype=float)
+        p2 = np.asarray([elites[np.random.randint(len(elites))][name] for name in param_names], dtype=float)
+        alpha = np.random.uniform(0.0, 1.0, size=dims)
+        child = alpha * p1 + (1.0 - alpha) * p2
+        child += np.random.normal(0.0, mutation_scale * (upper - lower), size=dims)
+        child = np.clip(child, lower, upper)
 
-        active_centroid = base_x[active]
-        active_span = upper[active] - lower[active]
-        sigma = float(sigma if sigma is not None else max(np.mean(active_span) * 0.2, 1e-3))
-        lambda_ = int(lambda_ if lambda_ is not None else max(4, 4 + int(3 * np.log(len(active) + 1))))
+        if active_indices is not None and len(active_indices) != dims:
+            if fixed_point is None:
+                raise ValueError("fixed_point is required when active_indices is provided.")
+            x_new = np.asarray(fixed_point, dtype=float).copy()
+            active = list(active_indices)
+            x_new[active] = child[active]
+        else:
+            x_new = child
 
-        toolbox = base.Toolbox()
-        strategy = cma.Strategy(centroid=active_centroid.tolist(), sigma=sigma, lambda_=lambda_)
-        toolbox.register("generate", strategy.generate, creator.AntennaIndividual)
-        toolbox.register("update", strategy.update)
-
-        evaluated_rows = []
-        eval_cache = {}
-        population = toolbox.generate()
-        for individual in population:
-            z = np.asarray(individual, dtype=float)
-            x_full = base_x.copy()
-            x_full[active] = z
-            x_full = np.clip(x_full, lower, upper)
-            key = tuple(np.round(x_full, 12))
-            if key in eval_cache:
-                y_scalar = eval_cache[key]
-            else:
-                y_value, row = objective_func(param_names, x_full)
-                y_scalar = float(y_value)
-                eval_cache[key] = y_scalar
-                evaluated_rows.append(row)
-            individual[:] = x_full[active].tolist()
-            individual.fitness.values = (y_scalar,)
-
-        toolbox.update(population)
-        best_individual = tools.selBest(population, 1)[0]
-
-        x_new = base_x.copy()
-        x_new[active] = np.asarray(best_individual, dtype=float)
-        x_new = np.clip(x_new, lower, upper)
-        if active_indices is not None and fixed_point is not None:
-            inactive = [i for i in range(dims) if i not in active]
-            x_new[inactive] = np.asarray(fixed_point, dtype=float)[inactive]
-
-        return x_new, {
-            "method": "cmaes",
-            "solver": "deap.cma",
-            "sigma": sigma,
-            "lambda": lambda_,
-            "base_y": float(best_individual.fitness.values[0]),
-            "evaluated_rows": evaluated_rows,
-        }
+        return x_new, {"method": "ga", "evaluated_rows": [], "elite_size": len(elites)}
