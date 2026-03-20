@@ -79,6 +79,55 @@ class Convex:
 
         plt.show()
 
+    def plotStepBackshort3D(self, step_info):
+        """Visualizes a step-backshort metadata dict returned by genStepBackshort."""
+        boxes = step_info.get('boxes', [])
+        if not boxes:
+            raise ValueError('step_info must contain a non-empty boxes list.')
+
+        fig = plt.figure(figsize=(10, 7))
+        ax = fig.add_subplot(111, projection='3d')
+        ax.xaxis.pane.set_edgecolor('k')
+        ax.yaxis.pane.set_edgecolor('k')
+        ax.zaxis.pane.set_edgecolor('k')
+        ax.xaxis.pane.set_facecolor('w')
+        ax.yaxis.pane.set_facecolor('w')
+        ax.zaxis.pane.set_facecolor('w')
+        ax.grid(False)
+        ax.view_init(azim=50, elev=30)
+
+        all_vertices = []
+        for box in boxes:
+            x0, x1 = box['x_min'], box['x_max']
+            y0, y1 = box['y_min'], box['y_max']
+            z0, z1 = box['z_min'], box['z_max']
+            vertices = np.array([
+                [x0, y0, z0], [x1, y0, z0], [x1, y1, z0], [x0, y1, z0],
+                [x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1],
+            ])
+            all_vertices.append(vertices)
+            faces = [
+                vertices[[0, 1, 2, 3]],
+                vertices[[4, 5, 6, 7]],
+                vertices[[0, 1, 5, 4]],
+                vertices[[1, 2, 6, 5]],
+                vertices[[2, 3, 7, 6]],
+                vertices[[3, 0, 4, 7]],
+            ]
+            poly = Poly3DCollection(faces, alpha=0.25, facecolors='gray', edgecolors='k')
+            ax.add_collection3d(poly)
+            ax.scatter(vertices[:, 0], vertices[:, 1], vertices[:, 2], color='k', s=10, alpha=0.4)
+
+        pts = np.vstack(all_vertices)
+        ax.set_xlabel('X')
+        ax.set_ylabel('Y')
+        ax.set_zlabel('Z')
+        ax.set_xlim(pts[:, 0].min(), pts[:, 0].max())
+        ax.set_ylim(pts[:, 1].min(), pts[:, 1].max())
+        ax.set_zlim(pts[:, 2].min(), pts[:, 2].max())
+        ax.set_aspect('equal')
+        plt.show()
+
 class ConvexBackshort(Convex):
     """
     Specific class for Backshort generation, inheriting general Convex tools.
@@ -161,6 +210,22 @@ class ConvexBackshort(Convex):
             solid = box if solid is None else solid.union(box)
             z_cursor += height
 
+        boxes = []
+        z_cursor = 0.0
+        for i, height in enumerate(heights):
+            half_x = float(a) / (shrink ** i)
+            half_y = float(b) / (shrink ** i)
+            z_min = -(z_cursor + height)
+            boxes.append({
+                'x_min': -half_x + shift_x,
+                'x_max': half_x + shift_x,
+                'y_min': -half_y + shift_y,
+                'y_max': half_y + shift_y,
+                'z_min': z_min + shift_z,
+                'z_max': z_min + height + shift_z,
+            })
+            z_cursor += height
+
         solid = solid.translate((shift_x, shift_y, shift_z))
         exporters.export(solid, str(self.model_path))
         return {
@@ -170,6 +235,7 @@ class ConvexBackshort(Convex):
             'n_steps': len(heights),
             'shrink': float(shrink),
             'total_depth': float(sum(heights)),
+            'boxes': boxes,
         }
 
 

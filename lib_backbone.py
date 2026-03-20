@@ -156,16 +156,21 @@ class Backbone:
         design = lib_RFdesign.ConvexBackshort(model_path=model_paths[0])
         a = 9.525
         b = 4.7625
-        c = param_values[0]
-        k = int(param_values[1])
-        convex_backshort = design.genBackshort(a=a, b=b, c=c, k=k, grid_res=30, shifts=(0, -4.7625, -0.34575))
-        #design.plotConvex3D(convex_backshort) 
-        # 
+        step_heights = tuple(float(v) for v in param_values[:3])
+        step_info = design.genStepBackshort(a=a, b=b, step_heights=step_heights, shrink=1.5, shifts=(0, -4.7625, -0.34575))
+        #design.plotStepBackshort3D(step_info)
+
+        # Original smooth backshort path kept for coexistence / rollback
+        # c = param_values[0]
+        # k = int(param_values[1])
+        # convex_backshort = design.genBackshort(a=a, b=b, c=c, k=k, grid_res=30, shifts=(0, -4.7625, -0.34575))
+        #design.plotConvex3D(convex_backshort)
+        #
         # Create step file for Finshape
         design = lib_RFdesign.ConvexFinshape(model_path=model_paths[1])
-        a = param_values[2]
-        b = param_values[3]
-        k = param_values[4]
+        a = param_values[3]
+        b = param_values[4]
+        k = param_values[5]
         #print(param_values)
         convex_finshape = design.genFinshape(a=a, b=b, k=k, grid_res=400, shifts=(0.0, -1.0))
         #design.plotProfile2D(convex_finshape)

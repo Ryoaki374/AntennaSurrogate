@@ -200,6 +200,33 @@ except ImportError:
     ExactMarginalLogLikelihood = None
 
 
+try:
+    import torch
+    from botorch.acquisition.analytic import ExpectedImprovement, UpperConfidenceBound
+    from botorch.acquisition.fixed_feature import FixedFeatureAcquisitionFunction
+    from botorch.fit import fit_gpytorch_mll
+    from botorch.models import SingleTaskGP
+    from botorch.models.transforms.input import Normalize
+    from botorch.models.transforms.outcome import Standardize
+    from botorch.optim import optimize_acqf
+    from gpytorch.kernels import MaternKernel, RBFKernel, ScaleKernel
+    from gpytorch.mlls import ExactMarginalLogLikelihood
+except ImportError:
+    torch = None
+    ExpectedImprovement = None
+    UpperConfidenceBound = None
+    FixedFeatureAcquisitionFunction = None
+    fit_gpytorch_mll = None
+    SingleTaskGP = None
+    Normalize = None
+    Standardize = None
+    optimize_acqf = None
+    MaternKernel = None
+    RBFKernel = None
+    ScaleKernel = None
+    ExactMarginalLogLikelihood = None
+
+
 class GaussianProcess:
     def __init__(self, config: AppConfig,):
         self.cfg = config

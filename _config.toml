@@ -29,24 +29,24 @@
     n_simulation = 50
     n_repeats = 1
     n_init = 15
-    n_params = 5
+    n_params = 6
     group_order = ["A", "B"]
     filename_models = ["Backshort.step", "Finshape.step"]
 
     [hfss.param_groups.A]
-    param_names  = ["c", "n"]
-    param_units  = ["mm", ""]
-    lower_bounds = [-10, 1]
-    upper_bounds = [-2, 5]
-    baseline     = [-6.0, 3.0]
+    param_names  = ["h1", "h2", "h3"]
+    param_units  = ["mm", "mm", "mm"]
+    lower_bounds = [1.0, 1.0, 1.0]
+    upper_bounds = [5.0, 5.0, 5.0]
+    baseline     = [2.0, 2.0, 2.0]
     vary         = true
 
-    # step-backshort example (coexists as a commented reference)
-    # param_names  = ["h1", "h2", "h3"]
-    # param_units  = ["mm", "mm", "mm"]
-    # lower_bounds = [1.0, 1.0, 1.0]
-    # upper_bounds = [5.0, 5.0, 5.0]
-    # baseline     = [2.0, 2.0, 2.0]  # per-step thickness values for genStepBackshort(step_heights=...)
+    # original smooth backshort example (coexists as a commented reference)
+    # param_names  = ["c", "n"]
+    # param_units  = ["mm", ""]
+    # lower_bounds = [-10, 1]
+    # upper_bounds = [-2, 5]
+    # baseline     = [-6.0, 3.0]
 
     [hfss.param_groups.B]
     param_names  = ["a", "b", "k"]
