@@ -8,3 +8,15 @@ cqmore
 torch
 gpytorch
 botorch
+deap
+
+numpy
+pandas
+scipy
+matplotlib
+h5py
+cadquery
+cqmore
+torch
+gpytorch
+botorch
