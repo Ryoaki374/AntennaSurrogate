@@ -79,17 +79,66 @@ class Convex:
 
         plt.show()
 
+    def plotStepBackshort3D(self, step_info):
+        """Visualizes a step-backshort metadata dict returned by genStepBackshort."""
+        boxes = step_info.get('boxes', [])
+        if not boxes:
+            raise ValueError('step_info must contain a non-empty boxes list.')
+
+        fig = plt.figure(figsize=(10, 7))
+        ax = fig.add_subplot(111, projection='3d')
+        ax.xaxis.pane.set_edgecolor('k')
+        ax.yaxis.pane.set_edgecolor('k')
+        ax.zaxis.pane.set_edgecolor('k')
+        ax.xaxis.pane.set_facecolor('w')
+        ax.yaxis.pane.set_facecolor('w')
+        ax.zaxis.pane.set_facecolor('w')
+        ax.grid(False)
+        ax.view_init(azim=50, elev=30)
+
+        all_vertices = []
+        for box in boxes:
+            x0, x1 = box['x_min'], box['x_max']
+            y0, y1 = box['y_min'], box['y_max']
+            z0, z1 = box['z_min'], box['z_max']
+            vertices = np.array([
+                [x0, y0, z0], [x1, y0, z0], [x1, y1, z0], [x0, y1, z0],
+                [x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1],
+            ])
+            all_vertices.append(vertices)
+            faces = [
+                vertices[[0, 1, 2, 3]],
+                vertices[[4, 5, 6, 7]],
+                vertices[[0, 1, 5, 4]],
+                vertices[[1, 2, 6, 5]],
+                vertices[[2, 3, 7, 6]],
+                vertices[[3, 0, 4, 7]],
+            ]
+            poly = Poly3DCollection(faces, alpha=0.25, facecolors='gray', edgecolors='k')
+            ax.add_collection3d(poly)
+            ax.scatter(vertices[:, 0], vertices[:, 1], vertices[:, 2], color='k', s=10, alpha=0.4)
+
+        pts = np.vstack(all_vertices)
+        ax.set_xlabel('X')
+        ax.set_ylabel('Y')
+        ax.set_zlabel('Z')
+        ax.set_xlim(pts[:, 0].min(), pts[:, 0].max())
+        ax.set_ylim(pts[:, 1].min(), pts[:, 1].max())
+        ax.set_zlim(pts[:, 2].min(), pts[:, 2].max())
+        ax.set_aspect('equal')
+        plt.show()
+
 class ConvexBackshort(Convex):
     """
     Specific class for Backshort generation, inheriting general Convex tools.
     """
     def genBackshort(self, a=9.525, b=4.7625, c=-7.725, k=6, grid_res=30, shifts=(0, -4.7625, -0.34575)):
         """
-        Generates the backshort geometry and exports it to STEP.
-        Maintains original mathematical formulas and function names.
+        Generates the original smooth backshort geometry and exports it to STEP.
+        Maintains the original mathematical formulas and function names.
         """
         shift_x, shift_y, shift_z = shifts
-        
+
         # 1. Generate point cloud
         x = np.linspace(-a, a, grid_res)
         y = np.linspace(-b, b, grid_res)
@@ -108,15 +157,87 @@ class ConvexBackshort(Convex):
 
         # 3. Compute Convex Hull
         hull_data = ConvexHull(raw_points)
-        
+
         # 4. Create CadQuery solid and export
         result = Workplane().polyhedron(hull_data.points, hull_data.simplices)
-        
-        # Secure export using Pathlib joined path
+
         exporters.export(result, str(self.model_path))
-        
         return hull_data
-    
+
+    def genStepBackshort(
+        self,
+        a=9.525,
+        b=4.7625,
+        step_heights=(2.0, 2.0, 2.0),
+        shrink=1.5,
+        shifts=(0, -4.7625, -0.34575),
+    ):
+        """
+        Generates a negative-Z step-backshort by stacking shrinking boxes.
+
+        Parameters
+        ----------
+        a, b : float
+            Base half-widths in X/Y.
+        step_heights : sequence[float]
+            Per-step thickness values. Each entry is stacked along negative Z.
+        shrink : float
+            XY shrink factor applied automatically for each higher step.
+        shifts : tuple[float, float, float]
+            Final translation applied to the stacked solid.
+        """
+        shift_x, shift_y, shift_z = shifts
+        heights = [float(h) for h in step_heights if float(h) > 0]
+        if not heights:
+            raise ValueError('step_heights must contain at least one positive thickness.')
+        if shrink <= 1.0:
+            raise ValueError('shrink must be greater than 1.0.')
+
+        solid = None
+        z_cursor = 0.0
+        for i, height in enumerate(heights):
+            half_x = float(a) / (shrink ** i)
+            half_y = float(b) / (shrink ** i)
+            width_x = 2.0 * half_x
+            width_y = 2.0 * half_y
+            z_min = -(z_cursor + height)
+
+            box = (
+                cq.Workplane('XY')
+                .box(width_x, width_y, height, centered=(True, True, False))
+                .translate((0.0, 0.0, z_min))
+            )
+            solid = box if solid is None else solid.union(box)
+            z_cursor += height
+
+        boxes = []
+        z_cursor = 0.0
+        for i, height in enumerate(heights):
+            half_x = float(a) / (shrink ** i)
+            half_y = float(b) / (shrink ** i)
+            z_min = -(z_cursor + height)
+            boxes.append({
+                'x_min': -half_x + shift_x,
+                'x_max': half_x + shift_x,
+                'y_min': -half_y + shift_y,
+                'y_max': half_y + shift_y,
+                'z_min': z_min + shift_z,
+                'z_max': z_min + height + shift_z,
+            })
+            z_cursor += height
+
+        solid = solid.translate((shift_x, shift_y, shift_z))
+        exporters.export(solid, str(self.model_path))
+        return {
+            'type': 'stepbackshort',
+            'base_half_width': (float(a), float(b)),
+            'step_heights': heights,
+            'n_steps': len(heights),
+            'shrink': float(shrink),
+            'total_depth': float(sum(heights)),
+            'boxes': boxes,
+        }
+
 
 class ConvexFinshape(Convex):
     
