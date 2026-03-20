@@ -25,17 +25,19 @@ def plot_learning_curve(df_output):
     ax.set_ylabel('Best Minimum Value Found (S11)', color='tab:blue')
     ax.tick_params(axis='y', labelcolor='tab:blue')
 
+    metric_col = "Metric" if "Metric" in df_output.columns else "Acq"
+
     ax2 = ax.twinx()
     ax2.plot(
         df_output.index,
-        df_output["Acq"],
+        df_output[metric_col],
         marker='x',
         linestyle=':',
         markersize=4,
         color='tab:green',
-        label='Calculated EI'
+        label='Calculated metric'
     )
-    ax2.set_ylabel('Acquisition', color='tab:green')
+    ax2.set_ylabel(metric_col, color='tab:green')
     ax2.tick_params(axis='y', labelcolor='tab:green')
 
     ax.grid(True, linestyle='--', alpha=0.6)
