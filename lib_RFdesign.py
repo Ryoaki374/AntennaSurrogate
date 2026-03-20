@@ -85,11 +85,11 @@ class ConvexBackshort(Convex):
     """
     def genBackshort(self, a=9.525, b=4.7625, c=-7.725, k=6, grid_res=30, shifts=(0, -4.7625, -0.34575)):
         """
-        Generates the backshort geometry and exports it to STEP.
-        Maintains original mathematical formulas and function names.
+        Generates the original smooth backshort geometry and exports it to STEP.
+        Maintains the original mathematical formulas and function names.
         """
         shift_x, shift_y, shift_z = shifts
-        
+
         # 1. Generate point cloud
         x = np.linspace(-a, a, grid_res)
         y = np.linspace(-b, b, grid_res)
@@ -108,15 +108,70 @@ class ConvexBackshort(Convex):
 
         # 3. Compute Convex Hull
         hull_data = ConvexHull(raw_points)
-        
+
         # 4. Create CadQuery solid and export
         result = Workplane().polyhedron(hull_data.points, hull_data.simplices)
-        
-        # Secure export using Pathlib joined path
+
         exporters.export(result, str(self.model_path))
-        
         return hull_data
-    
+
+    def genStepBackshort(
+        self,
+        a=9.525,
+        b=4.7625,
+        step_heights=(2.0, 2.0, 2.0),
+        shrink=1.5,
+        shifts=(0, -4.7625, -0.34575),
+    ):
+        """
+        Generates a negative-Z step-backshort by stacking shrinking boxes.
+
+        Parameters
+        ----------
+        a, b : float
+            Base half-widths in X/Y.
+        step_heights : sequence[float]
+            Per-step thickness values. Each entry is stacked along negative Z.
+        shrink : float
+            XY shrink factor applied automatically for each higher step.
+        shifts : tuple[float, float, float]
+            Final translation applied to the stacked solid.
+        """
+        shift_x, shift_y, shift_z = shifts
+        heights = [float(h) for h in step_heights if float(h) > 0]
+        if not heights:
+            raise ValueError('step_heights must contain at least one positive thickness.')
+        if shrink <= 1.0:
+            raise ValueError('shrink must be greater than 1.0.')
+
+        solid = None
+        z_cursor = 0.0
+        for i, height in enumerate(heights):
+            half_x = float(a) / (shrink ** i)
+            half_y = float(b) / (shrink ** i)
+            width_x = 2.0 * half_x
+            width_y = 2.0 * half_y
+            z_min = -(z_cursor + height)
+
+            box = (
+                cq.Workplane('XY')
+                .box(width_x, width_y, height, centered=(True, True, False))
+                .translate((0.0, 0.0, z_min))
+            )
+            solid = box if solid is None else solid.union(box)
+            z_cursor += height
+
+        solid = solid.translate((shift_x, shift_y, shift_z))
+        exporters.export(solid, str(self.model_path))
+        return {
+            'type': 'stepbackshort',
+            'base_half_width': (float(a), float(b)),
+            'step_heights': heights,
+            'n_steps': len(heights),
+            'shrink': float(shrink),
+            'total_depth': float(sum(heights)),
+        }
+
 
 class ConvexFinshape(Convex):
     

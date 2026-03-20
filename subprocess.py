@@ -74,7 +74,7 @@ def runSimulation():
     try:
             # model import
             printlog("[State] Importing step file from: {}".format(MODEL_FILE))
-            # Back short
+            # Backshort body (or step-backshort body when using the alternate generator)
             oEditor = oDesign.SetActiveEditor("3D Modeler")
             oEditor.Import(
             	[
