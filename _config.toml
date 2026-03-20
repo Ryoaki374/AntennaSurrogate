@@ -8,7 +8,7 @@
 
 # ------------------------------------------------------------  GP Hyperparams
 [opt]
-    kernel_type     = "RBF" # kernel name
+    kernel_type     = "RBF" # kernel name: RBF or Matern52
     length_scale    = 1.0
     noise_std       = 0.01
     noise_var       = 0.0001
