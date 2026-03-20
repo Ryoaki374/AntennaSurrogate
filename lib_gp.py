@@ -92,6 +92,33 @@ except ImportError:
     ExactMarginalLogLikelihood = None
 
 
+try:
+    import torch
+    from botorch.acquisition.analytic import ExpectedImprovement, UpperConfidenceBound
+    from botorch.acquisition.fixed_feature import FixedFeatureAcquisitionFunction
+    from botorch.fit import fit_gpytorch_mll
+    from botorch.models import SingleTaskGP
+    from botorch.models.transforms.input import Normalize
+    from botorch.models.transforms.outcome import Standardize
+    from botorch.optim import optimize_acqf
+    from gpytorch.kernels import MaternKernel, RBFKernel, ScaleKernel
+    from gpytorch.mlls import ExactMarginalLogLikelihood
+except ImportError:
+    torch = None
+    ExpectedImprovement = None
+    UpperConfidenceBound = None
+    FixedFeatureAcquisitionFunction = None
+    fit_gpytorch_mll = None
+    SingleTaskGP = None
+    Normalize = None
+    Standardize = None
+    optimize_acqf = None
+    MaternKernel = None
+    RBFKernel = None
+    ScaleKernel = None
+    ExactMarginalLogLikelihood = None
+
+
 class GaussianProcess:
     def __init__(self, config: AppConfig,):
         self.cfg = config
@@ -133,6 +160,17 @@ class GaussianProcess:
         bounds = np.vstack([lower, upper])
         return torch.tensor(bounds, dtype=self.dtype, device=self.device)
 
+
+    def _build_covar_module(self, dims: int):
+        kernel_type = str(self.cfg.opt.kernel_type).lower()
+        if kernel_type == "rbf":
+            base_kernel = RBFKernel(ard_num_dims=dims)
+        elif kernel_type in {"matern", "matern52", "matern_5_2", "matern5/2"}:
+            base_kernel = MaternKernel(nu=2.5, ard_num_dims=dims)
+        else:
+            raise ValueError(f"Unsupported kernel_type: {self.cfg.opt.kernel_type}")
+        return ScaleKernel(base_kernel)
+
     def _extract_length_scale(self) -> float:
         model = self.model
         covar_module = getattr(model, "covar_module", None)
@@ -154,6 +192,7 @@ class GaussianProcess:
         model = SingleTaskGP(
             train_X=train_X,
             train_Y=train_Y_model,
+            covar_module=self._build_covar_module(train_X.shape[-1]),
             input_transform=Normalize(d=train_X.shape[-1], bounds=self._get_input_bounds(train_X.shape[-1])),
             outcome_transform=Standardize(m=1),
         )
