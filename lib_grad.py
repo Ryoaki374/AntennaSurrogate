@@ -4,23 +4,24 @@ from scipy.optimize import minimize
 from typing import Optional, List, Tuple
 
 
-def _round_vector(values: np.ndarray, decimals: int = 5) -> np.ndarray:
+def _round_vector(values: np.ndarray, decimals: int = 10) -> np.ndarray:
     return np.round(np.asarray(values, dtype=float), decimals=decimals)
 
 
-def _format_vector(values: np.ndarray) -> str:
-    return np.array2string(_round_vector(values, decimals=5), precision=5, separator=", ")
+def _format_vector(values: np.ndarray, decimals: int) -> str:
+    return np.array2string(_round_vector(values, decimals=decimals), precision=decimals, separator=", ")
 
 
 class GradientSearch:
     def __init__(self, config: AppConfig):
         self.cfg = config
+        self.round_decimals = getattr(getattr(config, "runtime", None), "round_decimals", 10)
 
     def _build_base_point(self, best_x, active_indices, fixed_point):
         base_x = np.asarray(best_x, dtype=float).copy()
         if active_indices is None or fixed_point is None:
             return base_x
-        x = _round_vector(np.asarray(fixed_point, dtype=float).copy(), decimals=5)
+        x = _round_vector(np.asarray(fixed_point, dtype=float).copy(), decimals=self.round_decimals)
         active = list(active_indices)
         x[active] = base_x[active]
         return x
@@ -50,7 +51,7 @@ class GradientSearch:
         active = list(range(dims)) if active_indices is None else list(active_indices)
 
         best_row = dict(start_row) if start_row is not None else min(history_data, key=lambda row: row["S11"])
-        best_x = _round_vector(np.asarray([best_row[name] for name in param_names], dtype=float), decimals=5)
+        best_x = _round_vector(np.asarray([best_row[name] for name in param_names], dtype=float), decimals=self.round_decimals)
         base_x = self._build_base_point(best_x, active_indices, fixed_point)
 
         if routine_index is not None and routine_total is not None:
@@ -70,14 +71,14 @@ class GradientSearch:
             x_full = base_x.copy()
             x_full[active] = np.asarray(z, dtype=float)
             x_full = np.clip(x_full, lower, upper)
-            x_full = _round_vector(x_full, decimals=5)
+            x_full = _round_vector(x_full, decimals=self.round_decimals)
 
             key = tuple(x_full.tolist())
             if key in eval_cache:
                 cached_value = eval_cache[key]
                 print(
                     f"[grad_lbfgs] routine {routine_index or '-'} cache hit "
-                    f"f={cached_value:.6f} x={_format_vector(x_full)}"
+                    f"f={cached_value:.6f} x={_format_vector(x_full, self.round_decimals)}"
                 )
                 return cached_value
 
@@ -90,7 +91,7 @@ class GradientSearch:
             eval_cache[key] = y_scalar
             print(
                 f"[grad_lbfgs] routine {routine_index or '-'} eval {eval_count} "
-                f"f={y_scalar:.6f} x={_format_vector(x_full)}"
+                f"f={y_scalar:.6f} x={_format_vector(x_full, self.round_decimals)}"
             )
             return y_scalar
 
@@ -127,11 +128,11 @@ class GradientSearch:
         x_new = base_x.copy()
         x_new[active] = res_x
         x_new = np.clip(x_new, lower, upper)
-        x_new = _round_vector(x_new, decimals=5)
+        x_new = _round_vector(x_new, decimals=self.round_decimals)
 
         if active_indices is not None and fixed_point is not None:
             inactive = [i for i in range(dims) if i not in active]
-            x_new[inactive] = _round_vector(np.asarray(fixed_point, dtype=float), decimals=5)[inactive]
+            x_new[inactive] = _round_vector(np.asarray(fixed_point, dtype=float), decimals=self.round_decimals)[inactive]
 
         if routine_index is not None and routine_total is not None:
             print(
@@ -139,7 +140,7 @@ class GradientSearch:
                 f"(remaining: {routine_total - routine_index}, nit: {nit}, nfev: {nfev})"
             )
             print(
-                f"[grad_lbfgs] best x={_format_vector(x_new)} f={res_fun:.6f}"
+                f"[grad_lbfgs] best x={_format_vector(x_new, self.round_decimals)} f={res_fun:.6f}"
             )
 
         return x_new, {
