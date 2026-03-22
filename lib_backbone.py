@@ -20,6 +20,9 @@ class Backbone:
         self.h5f = None
         self.current_sim_id = 0
 
+    def _round_param_values(self, param_values: Sequence[float], decimals: int = 2) -> np.ndarray:
+        return np.round(np.asarray(param_values, dtype=float).flatten(), decimals=decimals)
+
     def mkdir(self):
         if not hasattr(self, "dir_run"): # attribute check
             timestamp = datetime.now().strftime("%m%d%H%M%S")
@@ -139,7 +142,7 @@ class Backbone:
 
         group_order = self.cfg.hfss.group_order or list(self.cfg.hfss.param_groups.keys())
         grouped_values = {}
-        param_values = np.asarray(param_values, dtype=float).flatten()
+        param_values = self._round_param_values(param_values, decimals=2)
 
         cursor = 0
         for group_name in group_order:
