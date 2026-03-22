@@ -152,11 +152,18 @@ class Backbone:
 
         #unit_arr = unit_arr[:4]
 
+        param_values = np.asarray(param_values, dtype=float).flatten()
+        n_backshort = len(self.cfg.hfss.param_groups["A"]["param_names"])
+        n_fin = len(self.cfg.hfss.param_groups["B"]["param_names"])
+        expected_dims = n_backshort + n_fin
+        if len(param_values) < expected_dims:
+            raise ValueError(f"Expected at least {expected_dims} HFSS parameters, got {len(param_values)}.")
+
         # Create step file for Backshort
         design = lib_RFdesign.ConvexBackshort(model_path=model_paths[0])
         a = 9.525
         b = 4.7625
-        step_heights = tuple(float(v) for v in param_values[:3])
+        step_heights = tuple(float(v) for v in param_values[:n_backshort])
         step_info = design.genStepBackshort(a=a, b=b, step_heights=step_heights, shrink=1.5, shifts=(0, -4.7625, -0.34575))
         #design.plotStepBackshort3D(step_info)
 
@@ -168,9 +175,10 @@ class Backbone:
         #
         # Create step file for Finshape
         design = lib_RFdesign.ConvexFinshape(model_path=model_paths[1])
-        a = param_values[3]
-        b = param_values[4]
-        k = param_values[5]
+        fin_values = param_values[n_backshort:n_backshort + n_fin]
+        a = fin_values[0]
+        b = fin_values[1]
+        k = fin_values[2]
         #print(param_values)
         convex_finshape = design.genFinshape(a=a, b=b, k=k, grid_res=400, shifts=(0.0, -1.0))
         #design.plotProfile2D(convex_finshape)
@@ -336,7 +344,6 @@ class Backbone:
         print("\n" + "=" * 50)
         print(msg)
         print("=" * 50)
-
 
 
 
