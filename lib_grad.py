@@ -1,6 +1,5 @@
 from lib_config import AppConfig
 import numpy as np
-from scipy.optimize import minimize
 from typing import Optional, List, Tuple
 
 
@@ -26,7 +25,8 @@ class GradientSearch:
         objective_func=None,
         active_indices: Optional[List[int]] = None,
         fixed_point: Optional[np.ndarray] = None,
-        maxiter: int = 20,
+        fd_eps: float = 0.02,
+        step_scale: float = 0.05,
         **kwargs,
     ) -> Tuple[np.ndarray, dict]:
         if objective_func is None:
@@ -40,66 +40,41 @@ class GradientSearch:
         best_row = min(history_data, key=lambda row: row["S11"])
         best_x = np.asarray([best_row[name] for name in param_names], dtype=float)
         base_x = self._build_base_point(best_x, active_indices, fixed_point)
+        base_y = float(best_row["S11"])
 
+        grad = np.zeros(dims, dtype=float)
         evaluated_rows = []
-        eval_cache = {}
 
-        def _cache_key(x_full):
-            return tuple(np.round(np.asarray(x_full, dtype=float), 12))
+        for idx in active:
+            delta = fd_eps * max(upper[idx] - lower[idx], 1e-12)
+            x_probe = base_x.copy()
+            x_probe[idx] = min(upper[idx], x_probe[idx] + delta)
+            if x_probe[idx] == base_x[idx]:
+                x_probe[idx] = max(lower[idx], x_probe[idx] - delta)
+            denom = x_probe[idx] - base_x[idx]
+            if denom == 0:
+                continue
+            y_probe, row_probe = objective_func(param_names, x_probe)
+            grad[idx] = (float(y_probe) - base_y) / denom
+            evaluated_rows.append(row_probe.copy())
 
-        def objective_active(z):
-            x_full = base_x.copy()
-            x_full[active] = np.asarray(z, dtype=float)
-            x_full = np.clip(x_full, lower, upper)
-
-            key = _cache_key(x_full)
-            if key in eval_cache:
-                return eval_cache[key]["y"]
-
-            y_value, row = objective_func(param_names, x_full)
-            y_scalar = float(y_value)
-            eval_cache[key] = {"y": y_scalar, "row": row.copy()}
-            evaluated_rows.append(row.copy())
-            return y_scalar
-
-        bounds_active = list(zip(lower[active], upper[active]))
-        x0 = base_x[active]
-        options = {"maxiter": maxiter}
-        maxfun = kwargs.get("maxfun")
-        if maxfun is not None:
-            options["maxfun"] = int(maxfun)
-
-        print(f"GradientSearch starting minimize: x0={x0}, bounds={bounds_active}, options={options}")
-        try:
-            res = minimize(
-                objective_active,
-                x0=x0,
-                method="L-BFGS-B",
-                bounds=bounds_active,
-                options=options,
-            )
-        except Exception as exc:
-            print(f"GradientSearch minimize failed: {exc}")
-            raise
-        print("GradientSearch optimization done")
-
+        grad_active = grad[active]
+        grad_norm = np.linalg.norm(grad_active)
         x_new = base_x.copy()
-        x_new[active] = res.x
+        if grad_norm > 0:
+            step = step_scale * (upper[active] - lower[active]) * (grad_active / grad_norm)
+            x_new[active] = x_new[active] - step
         x_new = np.clip(x_new, lower, upper)
 
         if active_indices is not None and fixed_point is not None:
             inactive = [i for i in range(dims) if i not in active]
             x_new[inactive] = np.asarray(fixed_point, dtype=float)[inactive]
 
-        final_key = _cache_key(x_new)
-        final_eval = eval_cache.get(final_key)
-
         return x_new, {
             "method": "gradient",
-            "solver": "L-BFGS-B",
-            "base_y": float(res.fun),
+            "gradient": grad.tolist(),
+            "base_y": base_y,
             "evaluated_rows": evaluated_rows,
-            "nit": int(getattr(res, "nit", 0)),
-            "final_row": None if final_eval is None else final_eval["row"].copy(),
-            "final_y": None if final_eval is None else float(final_eval["y"]),
+            "final_row": None,
+            "final_y": None,
         }
