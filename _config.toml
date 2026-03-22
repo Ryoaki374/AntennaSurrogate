@@ -13,6 +13,11 @@
     noise_std       = 0.01
     noise_var       = 0.0001
 
+
+# ------------------------------------------------------------  Runtime
+[runtime]
+    round_decimals = 10
+
 # ------------------------------------------------------------  HFSS simulation
 #[hfss]
 #    n_simulation    = 3  # maximum number of smulations per each iteration

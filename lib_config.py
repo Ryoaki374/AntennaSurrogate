@@ -80,16 +80,22 @@ class Depends:
     n_gp: Path
 
 @dataclasses.dataclass
+class RuntimeConfig:
+    round_decimals: int = 10
+
+@dataclasses.dataclass
 class AppConfig:
     io: IOConfig
     opt: GaussianProcessConfig
     hfss: HFSSConfig
     test: SyntheticTestConfig
     env: Environment
+    runtime: RuntimeConfig
 
     @staticmethod
     def fromDict(config: dict) -> "AppConfig":
         io = config["io"]; opt=config["opt"]; hfss = config["hfss"]; test = config["test"]
+        runtime = config.get("runtime", {})
 
         hfss = flatten_hfss_param_groups(hfss) # flatten param groups if they exist
 
@@ -104,6 +110,7 @@ class AppConfig:
             hfss = HFSSConfig(**hfss),
             test = SyntheticTestConfig(**test),
             env = env,
+            runtime = RuntimeConfig(**runtime),
         )
 
 # ------------------------------ App ------------------------------
