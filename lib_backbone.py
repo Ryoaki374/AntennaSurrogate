@@ -20,6 +20,9 @@ class Backbone:
         self.h5f = None
         self.current_sim_id = 0
 
+    def _round_param_values(self, param_values: Sequence[float], decimals: int = 5) -> np.ndarray:
+        return np.round(np.asarray(param_values, dtype=float).flatten(), decimals=decimals)
+
     def mkdir(self):
         if not hasattr(self, "dir_run"): # attribute check
             timestamp = datetime.now().strftime("%m%d%H%M%S")
@@ -81,7 +84,7 @@ class Backbone:
         return self.current_sim_id
 
     '''
-    def call_subroutine(self, config, index, param_names, param_values, value_fmt="{:.2f}"):
+    def call_subroutine(self, config, index, param_names, param_values, value_fmt="{:.5f}"):
         modelpaths = self._get_path_models()
         #input_file = config["INPUT_FILE"]
         input_file = str(self.dir_run / self.cfg.io.filename_input)
@@ -133,13 +136,13 @@ class Backbone:
             time.sleep(1)
     '''
 
-    def call_subroutine(self, config, index, param_names, param_values, value_fmt="{:.2f}"):
+    def call_subroutine(self, config, index, param_names, param_values, value_fmt="{:.5f}"):
         model_paths, _ = self._get_path_models()
         temp_file = str(self.dir_run / self.cfg.io.filename_temp)
 
         group_order = self.cfg.hfss.group_order or list(self.cfg.hfss.param_groups.keys())
         grouped_values = {}
-        param_values = np.asarray(param_values, dtype=float).flatten()
+        param_values = self._round_param_values(param_values, decimals=5)
 
         cursor = 0
         for group_name in group_order:
