@@ -43,9 +43,8 @@ try:
     #printlog("[Debug] {}, {}".format(config["n_repeats"], config["n_simulation"]))
 
     
-    # Simulation counts
-    TOTAL_SIMULATIONS_TO_RUN = config["n_simulation"] * config["n_repeats"]
-    printlog("Configuration loaded. WATCH_DIR: {}. Total Runs: {}".format(WATCH_DIR, TOTAL_SIMULATIONS_TO_RUN))
+    DONE_FLAG_FILE = config.get("DONE_FLAG_FILE", os.path.join(WATCH_DIR, "hfss.done"))
+    printlog("Configuration loaded. WATCH_DIR: {}. Done flag: {}".format(WATCH_DIR, DONE_FLAG_FILE))
 except Exception as e:
     printlog("[ERROR][loading config] {}".format(e))
     exit()
@@ -267,19 +266,24 @@ def runSimulation():
 
 # --- Main Loop ---
 printlog("[State] Entering main loop...")
-simulations_run = 0
 
-while simulations_run < TOTAL_SIMULATIONS_TO_RUN:
+while True:
+    if os.path.exists(DONE_FLAG_FILE):
+        printlog("[State] Done flag detected. Exiting subprocess loop.")
+        break
+
     if os.path.exists(MODEL_FILE[0]):
-        printlog("Run {}/{}:".format(simulations_run + 1, TOTAL_SIMULATIONS_TO_RUN))
+        printlog("[State] Detected model file. Starting simulation run.")
 
         time.sleep(0.2)
-        
+
         # 2. Run Simulation
         runSimulation()
-        
-        simulations_run += 1
-        
+
+        if os.path.exists(DONE_FLAG_FILE):
+            printlog("[State] Done flag detected after simulation run.")
+            break
+
     time.sleep(1)
 
 printlog("--- All Completed ---")
