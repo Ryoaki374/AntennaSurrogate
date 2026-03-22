@@ -82,6 +82,14 @@ class Depends:
 @dataclasses.dataclass
 class RuntimeConfig:
     round_decimals: int = 10
+    grad_fd_rel_step: float = 0.05
+    grad_explore_step_ratios: List[float] = dataclasses.field(default_factory=lambda: [0.5, 0.25, 0.1])
+    grad_lbfgs_maxls: int = 40
+    grad_db_fd_rel_step: float = 0.02
+    grad_db_init_step_ratio: float = 0.25
+    grad_db_backtrack_beta: float = 0.5
+    grad_db_armijo_c: float = 1e-4
+    grad_db_min_step_ratio: float = 1e-3
 
 @dataclasses.dataclass
 class AppConfig:

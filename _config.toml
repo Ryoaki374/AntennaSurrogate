@@ -17,6 +17,14 @@
 # ------------------------------------------------------------  Runtime
 [runtime]
     round_decimals = 10
+    grad_fd_rel_step = 0.05         # finite-difference step as a fraction of each parameter range
+    grad_explore_step_ratios = [0.5, 0.25, 0.1]  # trial step sizes for a broader pre-search move
+    grad_lbfgs_maxls = 40           # allow a deeper line search once a broader start is chosen
+    grad_db_fd_rel_step = 0.02      # finite-difference step for the simpler gradient_db routine
+    grad_db_init_step_ratio = 0.25  # first trial step as a fraction of the active parameter ranges
+    grad_db_backtrack_beta = 0.5    # shrink factor used when the Armijo condition fails
+    grad_db_armijo_c = 1.0e-4       # sufficient-decrease condition for backtracking line search
+    grad_db_min_step_ratio = 1.0e-3 # stop shrinking when the step gets too small
 
 # ------------------------------------------------------------  HFSS simulation
 #[hfss]
