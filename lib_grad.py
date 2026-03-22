@@ -4,6 +4,10 @@ from scipy.optimize import minimize
 from typing import Optional, List, Tuple
 
 
+class EvaluationBudgetExceeded(RuntimeError):
+    pass
+
+
 def _round_vector(values: np.ndarray, decimals: int = 10) -> np.ndarray:
     return np.round(np.asarray(values, dtype=float), decimals=decimals)
 
@@ -92,6 +96,7 @@ class GradientSearch:
         start_row: Optional[dict] = None,
         routine_index: Optional[int] = None,
         routine_total: Optional[int] = None,
+        max_evals: Optional[int] = None,
         **kwargs,
     ) -> Tuple[np.ndarray, dict]:
         if objective_func is None:
@@ -114,14 +119,19 @@ class GradientSearch:
                 f"(remaining incl. this: {remaining_before}, remaining after: {remaining_after})"
             )
 
+        bounds_active = list(zip(lower[active], upper[active]))
+        x0 = _round_vector(base_x[active], decimals=self.round_decimals)
+
         evaluated_rows = []
         eval_cache = {}
         eval_count = 0
+        best_seen_state = {"x_active": x0.copy(), "y": float(best_row["S11"]) }
 
         def objective_active(z):
             nonlocal eval_count
             x_full = base_x.copy()
-            x_full[active] = np.asarray(z, dtype=float)
+            z_array = np.asarray(z, dtype=float)
+            x_full[active] = z_array
             x_full = np.clip(x_full, lower, upper)
             x_full = _round_vector(x_full, decimals=self.round_decimals)
 
@@ -134,6 +144,9 @@ class GradientSearch:
                 )
                 return cached_value
 
+            if max_evals is not None and eval_count >= int(max_evals):
+                raise EvaluationBudgetExceeded("gradient search exhausted its evaluation budget")
+
             y_value, row = objective_func(param_names, x_full)
             y_scalar = float(y_value)
             eval_count += 1
@@ -141,21 +154,36 @@ class GradientSearch:
             debug_row["debug_eval_idx"] = eval_count
             evaluated_rows.append(debug_row)
             eval_cache[key] = y_scalar
+
+            if y_scalar < best_seen_state["y"]:
+                best_seen_state["y"] = y_scalar
+                best_seen_state["x_active"] = x_full[active].copy()
+
             print(
                 f"[grad_lbfgs] routine {routine_index or '-'} eval {eval_count} "
                 f"f={y_scalar:.6f} x={_format_vector(x_full, self.round_decimals)}"
             )
             return y_scalar
 
-        bounds_active = list(zip(lower[active], upper[active]))
-        x0 = _round_vector(base_x[active], decimals=self.round_decimals)
-
-        exploratory_x0, exploratory_fun, exploratory_grad, exploratory_ratio = self._select_exploratory_start(
-            objective_active,
-            x0,
-            bounds_active,
-        )
+        exploratory_x0 = x0.copy()
+        exploratory_fun = float(best_row["S11"])
+        exploratory_grad = np.zeros_like(x0)
+        exploratory_ratio = None
         lbfgs_eps = np.array([max(self.fd_rel_step * (high - low), 1e-8) for low, high in bounds_active], dtype=float)
+        budget_exhausted = False
+
+        try:
+            exploratory_x0, exploratory_fun, exploratory_grad, exploratory_ratio = self._select_exploratory_start(
+                objective_active,
+                x0,
+                bounds_active,
+            )
+        except EvaluationBudgetExceeded:
+            budget_exhausted = True
+            best_active = np.asarray(best_seen_state["x_active"], dtype=float)
+            exploratory_x0 = best_active.copy()
+            exploratory_fun = float(best_seen_state["y"])
+            exploratory_grad = np.zeros_like(x0)
 
         if exploratory_ratio is not None:
             print(
@@ -164,17 +192,11 @@ class GradientSearch:
                 f"x={_format_vector(exploratory_x0, self.round_decimals)}"
             )
 
-        if maxiter <= 0:
-            base_y = float(best_row["S11"])
-            if routine_index is not None and routine_total is not None:
-                print(
-                    f"[grad_lbfgs] skip routine {routine_index}/{routine_total} "
-                    f"because maxiter={maxiter} (returning current best point without new evaluations)"
-                )
-            res_fun = base_y
+        if maxiter <= 0 or budget_exhausted:
+            res_fun = exploratory_fun
             res_x = exploratory_x0.copy()
             nit = 0
-            nfev = 0
+            nfev = eval_count
         else:
             options = {
                 "maxiter": maxiter,
@@ -183,17 +205,25 @@ class GradientSearch:
             }
             if maxfun is not None:
                 options["maxfun"] = int(maxfun)
-            res = minimize(
-                objective_active,
-                x0=exploratory_x0,
-                method="L-BFGS-B",
-                bounds=bounds_active,
-                options=options,
-            )
-            res_fun = float(res.fun)
-            res_x = np.asarray(res.x, dtype=float)
-            nit = int(getattr(res, "nit", 0))
-            nfev = int(getattr(res, "nfev", eval_count))
+            try:
+                res = minimize(
+                    objective_active,
+                    x0=exploratory_x0,
+                    method="L-BFGS-B",
+                    bounds=bounds_active,
+                    options=options,
+                )
+                res_fun = float(res.fun)
+                res_x = np.asarray(res.x, dtype=float)
+                nit = int(getattr(res, "nit", 0))
+                nfev = int(getattr(res, "nfev", eval_count))
+            except EvaluationBudgetExceeded:
+                best_active = np.asarray(best_seen_state["x_active"], dtype=float)
+                res_x = best_active.copy()
+                res_fun = float(best_seen_state["y"])
+                nit = 0
+                nfev = eval_count
+                budget_exhausted = True
 
         x_new = base_x.copy()
         x_new[active] = res_x
@@ -207,7 +237,7 @@ class GradientSearch:
         if routine_index is not None and routine_total is not None:
             print(
                 f"[grad_lbfgs] end routine {routine_index}/{routine_total} "
-                f"(remaining: {routine_total - routine_index}, nit: {nit}, nfev: {nfev})"
+                f"(remaining: {routine_total - routine_index}, nit: {nit}, nfev: {nfev}, budget_exhausted: {budget_exhausted})"
             )
             print(
                 f"[grad_lbfgs] best x={_format_vector(x_new, self.round_decimals)} f={res_fun:.6f}"
@@ -222,4 +252,5 @@ class GradientSearch:
             "nfev": nfev,
             "exploratory_start_ratio": exploratory_ratio,
             "exploratory_grad_norm": float(np.linalg.norm(exploratory_grad)),
+            "budget_exhausted": budget_exhausted,
         }

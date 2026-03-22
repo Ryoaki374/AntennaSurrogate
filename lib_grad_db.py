@@ -3,6 +3,10 @@ import numpy as np
 from typing import Optional, List, Tuple
 
 
+class EvaluationBudgetExceeded(RuntimeError):
+    pass
+
+
 def _round_vector(values: np.ndarray, decimals: int = 10) -> np.ndarray:
     return np.round(np.asarray(values, dtype=float), decimals=decimals)
 
@@ -41,6 +45,7 @@ class GradientSearch:
         start_row: Optional[dict] = None,
         routine_index: Optional[int] = None,
         routine_total: Optional[int] = None,
+        max_evals: Optional[int] = None,
         **kwargs,
     ) -> Tuple[np.ndarray, dict]:
         if objective_func is None:
@@ -73,6 +78,8 @@ class GradientSearch:
             key = tuple(x_eval.tolist())
             if key in eval_cache:
                 return eval_cache[key]
+            if max_evals is not None and eval_count >= int(max_evals):
+                raise EvaluationBudgetExceeded("gradient_db exhausted its evaluation budget")
             y_value, row = objective_func(param_names, x_eval)
             y_scalar = float(y_value)
             eval_count += 1
@@ -86,46 +93,54 @@ class GradientSearch:
             )
             return eval_cache[key]
 
-        base_y, _ = evaluate(base_x)
-        grad = np.zeros(dims, dtype=float)
-        active_span = np.maximum(upper[active] - lower[active], 1e-12)
-        fd_rel_step = float(fd_eps) if fd_eps is not None else self.fd_rel_step
-        initial_step_ratio = float(step_scale) if step_scale is not None else self.initial_step_ratio
+        budget_exhausted = False
+        try:
+            base_y, _ = evaluate(base_x)
+            grad = np.zeros(dims, dtype=float)
+            active_span = np.maximum(upper[active] - lower[active], 1e-12)
+            fd_rel_step = float(fd_eps) if fd_eps is not None else self.fd_rel_step
+            initial_step_ratio = float(step_scale) if step_scale is not None else self.initial_step_ratio
 
-        for local_idx, idx in enumerate(active):
-            delta = fd_rel_step * active_span[local_idx]
-            x_left = base_x.copy()
-            x_right = base_x.copy()
-            x_left[idx] = max(lower[idx], x_left[idx] - delta)
-            x_right[idx] = min(upper[idx], x_right[idx] + delta)
-            denom = x_right[idx] - x_left[idx]
-            if denom <= 0:
-                continue
-            y_left, _ = evaluate(x_left)
-            y_right, _ = evaluate(x_right)
-            grad[idx] = (y_right - y_left) / denom
+            for local_idx, idx in enumerate(active):
+                delta = fd_rel_step * active_span[local_idx]
+                x_left = base_x.copy()
+                x_right = base_x.copy()
+                x_left[idx] = max(lower[idx], x_left[idx] - delta)
+                x_right[idx] = min(upper[idx], x_right[idx] + delta)
+                denom = x_right[idx] - x_left[idx]
+                if denom <= 0:
+                    continue
+                y_left, _ = evaluate(x_left)
+                y_right, _ = evaluate(x_right)
+                grad[idx] = (y_right - y_left) / denom
 
-        grad_active = grad[active]
-        grad_norm = np.linalg.norm(grad_active)
-        x_new = base_x.copy()
-        best_step_ratio = 0.0
+            grad_active = grad[active]
+            grad_norm = np.linalg.norm(grad_active)
+            x_new = base_x.copy()
+            best_step_ratio = 0.0
 
-        if grad_norm > 0:
-            direction = -grad_active / grad_norm
-            directional_derivative = float(np.dot(grad_active, direction))
-            step_ratio = initial_step_ratio
+            if grad_norm > 0:
+                direction = -grad_active / grad_norm
+                directional_derivative = float(np.dot(grad_active, direction))
+                step_ratio = initial_step_ratio
 
-            while step_ratio >= self.min_step_ratio:
-                candidate = base_x.copy()
-                candidate[active] = candidate[active] + step_ratio * active_span * direction
-                candidate = _round_vector(np.clip(candidate, lower, upper), decimals=self.round_decimals)
-                candidate_y, _ = evaluate(candidate)
-                armijo_rhs = base_y + self.armijo_c * step_ratio * directional_derivative * np.linalg.norm(active_span)
-                if candidate_y <= armijo_rhs:
-                    x_new = candidate
-                    best_step_ratio = step_ratio
-                    break
-                step_ratio *= self.backtrack_beta
+                while step_ratio >= self.min_step_ratio:
+                    candidate = base_x.copy()
+                    candidate[active] = candidate[active] + step_ratio * active_span * direction
+                    candidate = _round_vector(np.clip(candidate, lower, upper), decimals=self.round_decimals)
+                    candidate_y, _ = evaluate(candidate)
+                    armijo_rhs = base_y + self.armijo_c * step_ratio * directional_derivative * np.linalg.norm(active_span)
+                    if candidate_y <= armijo_rhs:
+                        x_new = candidate
+                        best_step_ratio = step_ratio
+                        break
+                    step_ratio *= self.backtrack_beta
+        except EvaluationBudgetExceeded:
+            grad = np.zeros(dims, dtype=float)
+            grad_norm = 0.0
+            x_new = base_x.copy()
+            best_step_ratio = 0.0
+            budget_exhausted = True
 
         if active_indices is not None and fixed_point is not None:
             inactive = [i for i in range(dims) if i not in active]
@@ -147,4 +162,5 @@ class GradientSearch:
             "step_ratio": best_step_ratio,
             "grad_norm": float(grad_norm),
             "nfev": eval_count,
+            "budget_exhausted": budget_exhausted,
         }
