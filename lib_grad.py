@@ -44,30 +44,44 @@ class GradientSearch:
         evaluated_rows = []
         eval_cache = {}
 
+        def _cache_key(x_full):
+            return tuple(np.round(np.asarray(x_full, dtype=float), 12))
+
         def objective_active(z):
             x_full = base_x.copy()
             x_full[active] = np.asarray(z, dtype=float)
             x_full = np.clip(x_full, lower, upper)
 
-            key = tuple(np.round(x_full, 12))
+            key = _cache_key(x_full)
             if key in eval_cache:
-                return eval_cache[key]
+                return eval_cache[key]["y"]
 
             y_value, row = objective_func(param_names, x_full)
             y_scalar = float(y_value)
-            evaluated_rows.append(row)
-            eval_cache[key] = y_scalar
+            eval_cache[key] = {"y": y_scalar, "row": row.copy()}
+            evaluated_rows.append(row.copy())
             return y_scalar
 
         bounds_active = list(zip(lower[active], upper[active]))
         x0 = base_x[active]
-        res = minimize(
-            objective_active,
-            x0=x0,
-            method="L-BFGS-B",
-            bounds=bounds_active,
-            options={"maxiter": maxiter},
-        )
+        options = {"maxiter": maxiter}
+        maxfun = kwargs.get("maxfun")
+        if maxfun is not None:
+            options["maxfun"] = int(maxfun)
+
+        print(f"GradientSearch starting minimize: x0={x0}, bounds={bounds_active}, options={options}")
+        try:
+            res = minimize(
+                objective_active,
+                x0=x0,
+                method="L-BFGS-B",
+                bounds=bounds_active,
+                options=options,
+            )
+        except Exception as exc:
+            print(f"GradientSearch minimize failed: {exc}")
+            raise
+        print("GradientSearch optimization done")
 
         x_new = base_x.copy()
         x_new[active] = res.x
@@ -77,10 +91,15 @@ class GradientSearch:
             inactive = [i for i in range(dims) if i not in active]
             x_new[inactive] = np.asarray(fixed_point, dtype=float)[inactive]
 
+        final_key = _cache_key(x_new)
+        final_eval = eval_cache.get(final_key)
+
         return x_new, {
             "method": "gradient",
             "solver": "L-BFGS-B",
             "base_y": float(res.fun),
             "evaluated_rows": evaluated_rows,
             "nit": int(getattr(res, "nit", 0)),
+            "final_row": None if final_eval is None else final_eval["row"].copy(),
+            "final_y": None if final_eval is None else float(final_eval["y"]),
         }
