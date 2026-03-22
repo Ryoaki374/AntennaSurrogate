@@ -69,13 +69,19 @@ class GradientSearch:
         if maxfun is not None:
             options["maxfun"] = int(maxfun)
 
-        res = minimize(
-            objective_active,
-            x0=x0,
-            method="L-BFGS-B",
-            bounds=bounds_active,
-            options=options,
-        )
+        print(f"GradientSearch starting minimize: x0={x0}, bounds={bounds_active}, options={options}")
+        try:
+            res = minimize(
+                objective_active,
+                x0=x0,
+                method="L-BFGS-B",
+                bounds=bounds_active,
+                options=options,
+            )
+        except Exception as exc:
+            print(f"GradientSearch minimize failed: {exc}")
+            raise
+        print("GradientSearch optimization done")
 
         x_new = base_x.copy()
         x_new[active] = res.x
