@@ -4,12 +4,12 @@ from scipy.optimize import minimize
 from typing import Optional, List, Tuple
 
 
-def _round_vector(values: np.ndarray, decimals: int = 2) -> np.ndarray:
+def _round_vector(values: np.ndarray, decimals: int = 5) -> np.ndarray:
     return np.round(np.asarray(values, dtype=float), decimals=decimals)
 
 
 def _format_vector(values: np.ndarray) -> str:
-    return np.array2string(_round_vector(values, decimals=2), precision=2, separator=", ")
+    return np.array2string(_round_vector(values, decimals=5), precision=5, separator=", ")
 
 
 class GradientSearch:
@@ -20,7 +20,7 @@ class GradientSearch:
         base_x = np.asarray(best_x, dtype=float).copy()
         if active_indices is None or fixed_point is None:
             return base_x
-        x = _round_vector(np.asarray(fixed_point, dtype=float).copy(), decimals=2)
+        x = _round_vector(np.asarray(fixed_point, dtype=float).copy(), decimals=5)
         active = list(active_indices)
         x[active] = base_x[active]
         return x
@@ -50,7 +50,7 @@ class GradientSearch:
         active = list(range(dims)) if active_indices is None else list(active_indices)
 
         best_row = dict(start_row) if start_row is not None else min(history_data, key=lambda row: row["S11"])
-        best_x = _round_vector(np.asarray([best_row[name] for name in param_names], dtype=float), decimals=2)
+        best_x = _round_vector(np.asarray([best_row[name] for name in param_names], dtype=float), decimals=5)
         base_x = self._build_base_point(best_x, active_indices, fixed_point)
 
         if routine_index is not None and routine_total is not None:
@@ -70,7 +70,7 @@ class GradientSearch:
             x_full = base_x.copy()
             x_full[active] = np.asarray(z, dtype=float)
             x_full = np.clip(x_full, lower, upper)
-            x_full = _round_vector(x_full, decimals=2)
+            x_full = _round_vector(x_full, decimals=5)
 
             key = tuple(x_full.tolist())
             if key in eval_cache:
@@ -86,7 +86,6 @@ class GradientSearch:
             eval_count += 1
             debug_row = dict(row)
             debug_row["debug_eval_idx"] = eval_count
-            debug_row["debug_source"] = "gradient_lbfgs"
             evaluated_rows.append(debug_row)
             eval_cache[key] = y_scalar
             print(
@@ -128,11 +127,11 @@ class GradientSearch:
         x_new = base_x.copy()
         x_new[active] = res_x
         x_new = np.clip(x_new, lower, upper)
-        x_new = _round_vector(x_new, decimals=2)
+        x_new = _round_vector(x_new, decimals=5)
 
         if active_indices is not None and fixed_point is not None:
             inactive = [i for i in range(dims) if i not in active]
-            x_new[inactive] = _round_vector(np.asarray(fixed_point, dtype=float), decimals=2)[inactive]
+            x_new[inactive] = _round_vector(np.asarray(fixed_point, dtype=float), decimals=5)[inactive]
 
         if routine_index is not None and routine_total is not None:
             print(
