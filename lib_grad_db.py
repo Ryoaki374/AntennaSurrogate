@@ -27,6 +27,8 @@ class GradientSearch:
         fixed_point: Optional[np.ndarray] = None,
         fd_eps: float = 0.02,
         step_scale: float = 0.05,
+        routine_index: Optional[int] = None,
+        routine_total: Optional[int] = None,
         **kwargs,
     ) -> Tuple[np.ndarray, dict]:
         if objective_func is None:
@@ -41,6 +43,14 @@ class GradientSearch:
         best_x = np.asarray([best_row[name] for name in param_names], dtype=float)
         base_x = self._build_base_point(best_x, active_indices, fixed_point)
         base_y = float(best_row["S11"])
+
+        if routine_index is not None and routine_total is not None:
+            remaining_before = routine_total - routine_index + 1
+            remaining_after = routine_total - routine_index
+            print(
+                f"[grad_db] start routine {routine_index}/{routine_total} "
+                f"(remaining incl. this: {remaining_before}, remaining after: {remaining_after})"
+            )
 
         grad = np.zeros(dims, dtype=float)
         evaluated_rows = []
@@ -69,6 +79,12 @@ class GradientSearch:
         if active_indices is not None and fixed_point is not None:
             inactive = [i for i in range(dims) if i not in active]
             x_new[inactive] = np.asarray(fixed_point, dtype=float)[inactive]
+
+        if routine_index is not None and routine_total is not None:
+            print(
+                f"[grad_db] end routine {routine_index}/{routine_total} "
+                f"(remaining: {routine_total - routine_index})"
+            )
 
         return x_new, {
             "method": "gradient",
