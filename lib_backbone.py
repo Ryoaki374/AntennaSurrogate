@@ -135,52 +135,51 @@ class Backbone:
 
     def call_subroutine(self, config, index, param_names, param_values, value_fmt="{:.2f}"):
         model_paths, _ = self._get_path_models()
-        #input_file = config["INPUT_FILE"]
-        #input_file = str(self.dir_run / self.cfg.io.filename_input)
-        #results_file = config["RESULTS_FILE"]
-        #temp_file = config["TEMP_FILE"]
         temp_file = str(self.dir_run / self.cfg.io.filename_temp)
-        #unit_arr = config["param_units"]
-        #unit_arr = self.cfg.hfss.param_units
 
-        #param_names = self.cfg.hfss.param_names
-        #param_names_step = self.cfg.hfss.param_names[-2:]
-        #param_values_step = param_values[-2:]
-        
-        #param_names = self.cfg.hfss.param_names[:4]
-        #param_values = param_values[:4]
-
-        #unit_arr = unit_arr[:4]
-
+        group_order = self.cfg.hfss.group_order or list(self.cfg.hfss.param_groups.keys())
+        grouped_values = {}
         param_values = np.asarray(param_values, dtype=float).flatten()
-        n_backshort = len(self.cfg.hfss.param_groups["A"]["param_names"])
-        n_fin = len(self.cfg.hfss.param_groups["B"]["param_names"])
-        expected_dims = n_backshort + n_fin
-        if len(param_values) < expected_dims:
-            raise ValueError(f"Expected at least {expected_dims} HFSS parameters, got {len(param_values)}.")
+
+        cursor = 0
+        for group_name in group_order:
+            group_cfg = self.cfg.hfss.param_groups[group_name]
+            names = list(group_cfg["param_names"])
+            next_cursor = cursor + len(names)
+            values = param_values[cursor:next_cursor]
+            if len(values) != len(names):
+                raise ValueError(
+                    f"Group {group_name} expects {len(names)} parameters, got {len(values)} from index {cursor}."
+                )
+            grouped_values[group_name] = dict(zip(names, values))
+            cursor = next_cursor
+
+        if cursor != len(param_values):
+            raise ValueError(f"Expected {cursor} HFSS parameters based on param_groups, got {len(param_values)}.")
 
         # Create step file for Backshort
         design = lib_RFdesign.ConvexBackshort(model_path=model_paths[0])
-        a = 9.525
-        b = 4.7625
-        step_heights = tuple(float(v) for v in param_values[:n_backshort])
-        step_info = design.genStepBackshort(a=a, b=b, step_heights=step_heights, shrink=1.5, shifts=(0, -4.7625, -0.34575))
-        #design.plotStepBackshort3D(step_info)
+        backshort_group = grouped_values["A"]
+        step_param_names = self.cfg.hfss.param_groups["A"]["param_names"]
+        step_heights = tuple(float(backshort_group[name]) for name in step_param_names)
+        design.genStepBackshort(
+            a=9.525,
+            b=4.7625,
+            step_heights=step_heights,
+            shrink=1.5,
+            shifts=(0, -4.7625, -0.34575),
+        )
 
-        # Original smooth backshort path kept for coexistence / rollback
-        # c = param_values[0]
-        # k = int(param_values[1])
-        # convex_backshort = design.genBackshort(a=a, b=b, c=c, k=k, grid_res=30, shifts=(0, -4.7625, -0.34575))
-        #design.plotConvex3D(convex_backshort)
-        #
         # Create step file for Finshape
         design = lib_RFdesign.ConvexFinshape(model_path=model_paths[1])
-        fin_values = param_values[n_backshort:n_backshort + n_fin]
-        a = fin_values[0]
-        b = fin_values[1]
-        k = fin_values[2]
-        #print(param_values)
-        convex_finshape = design.genFinshape(a=a, b=b, k=k, grid_res=400, shifts=(0.0, -1.0))
+        finshape_group = grouped_values["B"]
+        convex_finshape = design.genFinshape(
+            a=float(finshape_group["a"]),
+            b=float(finshape_group["b"]),
+            k=float(finshape_group["k"]),
+            grid_res=400,
+            shifts=(0.0, -1.0),
+        )
         #design.plotProfile2D(convex_finshape)
 
         #row = {'*': index}
