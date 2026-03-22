@@ -135,58 +135,59 @@ class Backbone:
 
     def call_subroutine(self, config, index, param_names, param_values, value_fmt="{:.2f}"):
         model_paths, _ = self._get_path_models()
-        #input_file = config["INPUT_FILE"]
-        #input_file = str(self.dir_run / self.cfg.io.filename_input)
-        #results_file = config["RESULTS_FILE"]
-        #temp_file = config["TEMP_FILE"]
-        temp_file = str(self.dir_run / self.cfg.io.filename_temp)
-        #unit_arr = config["param_units"]
-        #unit_arr = self.cfg.hfss.param_units
+        temp_path = self.dir_run / self.cfg.io.filename_temp
+        param_values = np.asarray(param_values, dtype=float).flatten()
 
-        #param_names = self.cfg.hfss.param_names
-        #param_names_step = self.cfg.hfss.param_names[-2:]
-        #param_values_step = param_values[-2:]
-        
-        #param_names = self.cfg.hfss.param_names[:4]
-        #param_values = param_values[:4]
+        group_order = self.cfg.hfss.group_order or list(self.cfg.hfss.param_groups.keys())
+        if len(group_order) < 2:
+            raise ValueError("HFSS param_groups must define at least two groups for backshort and fin parameters.")
 
-        #unit_arr = unit_arr[:4]
+        backshort_group = self.cfg.hfss.param_groups[group_order[0]]
+        fin_group = self.cfg.hfss.param_groups[group_order[1]]
+
+        n_backshort = len(backshort_group["param_names"])
+        n_fin = len(fin_group["param_names"])
+        expected_dims = n_backshort + n_fin
+        if len(param_values) < expected_dims:
+            raise ValueError(f"Expected at least {expected_dims} HFSS parameters, got {len(param_values)}.")
+
+        backshort_values = tuple(float(v) for v in param_values[:n_backshort])
+        fin_values = param_values[n_backshort:n_backshort + n_fin]
+
+        if temp_path.exists():
+            temp_path.unlink()
+        wait_started_at = time.time()
+
+        print(f"[HFSS] Preparing simulation #{index} with params={param_values.tolist()}")
 
         # Create step file for Backshort
         design = lib_RFdesign.ConvexBackshort(model_path=model_paths[0])
         a = 9.525
         b = 4.7625
-        step_heights = tuple(float(v) for v in param_values[:3])
-        step_info = design.genStepBackshort(a=a, b=b, step_heights=step_heights, shrink=1.5, shifts=(0, -4.7625, -0.34575))
+        step_info = design.genStepBackshort(
+            a=a,
+            b=b,
+            step_heights=backshort_values,
+            shrink=1.5,
+            shifts=(0, -4.7625, -0.34575),
+        )
         #design.plotStepBackshort3D(step_info)
 
-        # Original smooth backshort path kept for coexistence / rollback
-        # c = param_values[0]
-        # k = int(param_values[1])
-        # convex_backshort = design.genBackshort(a=a, b=b, c=c, k=k, grid_res=30, shifts=(0, -4.7625, -0.34575))
-        #design.plotConvex3D(convex_backshort)
-        #
         # Create step file for Finshape
+        if len(fin_values) < 3:
+            raise ValueError("Fin parameter group must contain at least three parameters: a, b, k.")
         design = lib_RFdesign.ConvexFinshape(model_path=model_paths[1])
-        a = param_values[3]
-        b = param_values[4]
-        k = param_values[5]
-        #print(param_values)
+        a = float(fin_values[0])
+        b = float(fin_values[1])
+        k = float(fin_values[2])
         convex_finshape = design.genFinshape(a=a, b=b, k=k, grid_res=400, shifts=(0.0, -1.0))
         #design.plotProfile2D(convex_finshape)
 
-        #row = {'*': index}
-        #
-        #for k, v, u in zip(self.cfg.hfss.param_names, param_values, unit_arr):
-        #    formatted_val = value_fmt.format(float(v))
-        #    row[k] = f"{formatted_val}{u}" if u else formatted_val
-    
-        #pd.DataFrame([row]).to_csv(input_file, index=False) should be detelted
-    
+        print(f"[HFSS] Waiting for fresh export file: {temp_path}")
         while True:
-            if os.path.exists(temp_file) and os.path.getsize(temp_file) > 0:
-                time.sleep(0.5) 
-                print("  > Result received from HFSS.")
+            if temp_path.exists() and temp_path.stat().st_size > 0 and temp_path.stat().st_mtime >= wait_started_at:
+                time.sleep(0.5)
+                print(f"  > Result received from HFSS for simulation #{index}.")
                 return True
             time.sleep(1)
 

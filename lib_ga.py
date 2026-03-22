@@ -59,20 +59,24 @@ class RealCodedGA:
 
         evaluated_rows = []
         eval_cache = {}
+
+        def _cache_key(x_full):
+            return tuple(np.round(np.asarray(x_full, dtype=float), 12))
+
         population = toolbox.generate()
         for individual in population:
             z = np.asarray(individual, dtype=float)
             x_full = base_x.copy()
             x_full[active] = z
             x_full = np.clip(x_full, lower, upper)
-            key = tuple(np.round(x_full, 12))
+            key = _cache_key(x_full)
             if key in eval_cache:
-                y_scalar = eval_cache[key]
+                y_scalar = eval_cache[key]["y"]
             else:
                 y_value, row = objective_func(param_names, x_full)
                 y_scalar = float(y_value)
-                eval_cache[key] = y_scalar
-                evaluated_rows.append(row)
+                eval_cache[key] = {"y": y_scalar, "row": row.copy()}
+                evaluated_rows.append(row.copy())
             individual[:] = x_full[active].tolist()
             individual.fitness.values = (y_scalar,)
 
@@ -86,6 +90,9 @@ class RealCodedGA:
             inactive = [i for i in range(dims) if i not in active]
             x_new[inactive] = np.asarray(fixed_point, dtype=float)[inactive]
 
+        final_key = _cache_key(x_new)
+        final_eval = eval_cache.get(final_key)
+
         return x_new, {
             "method": "cmaes",
             "solver": "deap.cma",
@@ -93,4 +100,6 @@ class RealCodedGA:
             "lambda": lambda_,
             "base_y": float(best_individual.fitness.values[0]),
             "evaluated_rows": evaluated_rows,
+            "final_row": None if final_eval is None else final_eval["row"].copy(),
+            "final_y": None if final_eval is None else float(final_eval["y"]),
         }
