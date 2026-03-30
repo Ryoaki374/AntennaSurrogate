@@ -83,58 +83,6 @@ class Backbone:
         self.current_sim_id += 1
         return self.current_sim_id
 
-    '''
-    def call_subroutine(self, config, index, param_names, param_values, value_fmt=None):
-        modelpaths = self._get_path_models()
-        #input_file = config["INPUT_FILE"]
-        input_file = str(self.dir_run / self.cfg.io.filename_input)
-        #results_file = config["RESULTS_FILE"]
-        #temp_file = config["TEMP_FILE"]
-        temp_file = str(self.dir_run / self.cfg.io.filename_temp)
-        #unit_arr = config["param_units"]
-        unit_arr = self.cfg.hfss.param_units
-
-        #param_names = self.cfg.hfss.param_names
-        param_names_step = self.cfg.hfss.param_names[-2:]
-        param_values_step = param_values[-2:]
-        
-        param_names = self.cfg.hfss.param_names[:4]
-        param_values = param_values[:4]
-
-        unit_arr = unit_arr[:4]
-
-        # Create step file for Backshort
-        design = lib_RFdesign.ConvexBackshort(model_path=modelpaths[0])
-        a = 9.525
-        b = 4.7625
-        c = param_values_step[0]
-        k = int(param_values_step[1])
-        convex_backshort = design.genBackshort(a=a, b=b, c=c, k=k, grid_res=30, shifts=(0, -4.7625, -0.34575))
-        #design.plotConvex3D(convex_backshort) 
-        # 
-        # Create step file for Finshape
-        design = lib_RFdesign.ConvexFinshape(model_path=modelpaths[1])
-        a = param_values[0]
-        b = param_values[1]
-        k = param_values[2]
-        convex_finshape = design.genFinshape(a=a, b=b, k=k, grid_res=400, shifts=(0.0, -1.0))
-        design.plotProfile2D(convex_finshape)
-
-        row = {'*': index}
-        
-        for k, v, u in zip(self.cfg.hfss.param_names, param_values, unit_arr):
-            formatted_val = value_fmt.format(float(v))
-            row[k] = f"{formatted_val}{u}" if u else formatted_val
-    
-        pd.DataFrame([row]).to_csv(input_file, index=False)
-    
-        while True:
-            if os.path.exists(temp_file) and os.path.getsize(temp_file) > 0:
-                time.sleep(0.5) 
-                print("  > Result received from HFSS.")
-                return True
-            time.sleep(1)
-    '''
 
     def call_subroutine(self, config, index, param_names, param_values, value_fmt=None):
         model_paths, _ = self._get_path_models()
@@ -166,15 +114,23 @@ class Backbone:
         # Create step file for Backshort
         design = lib_RFdesign.ConvexBackshort(model_path=model_paths[0])
         backshort_group = grouped_values["A"]
-        step_param_names = self.cfg.hfss.param_groups["A"]["param_names"]
-        step_heights = tuple(float(backshort_group[name]) for name in step_param_names)
-        design.genStepBackshort(
+        shrink_params = tuple(float(backshort_group[name]) for name in ("s1", "s2", "s3", "s4", "s5"))
+        design.genStepBackshortCont(
             a=9.525,
             b=4.7625,
-            step_heights=step_heights,
-            shrink=1.5,
+            step_heights=(2.0, 2.0, 2.0, 2.0, 2.0),
+            shrink_params=shrink_params,
             shifts=(0, -4.7625, -0.34575),
         )
+        # Legacy fallback example (keep for quick manual rollback):
+        # step_heights = tuple(float(backshort_group[name]) for name in ("h1", "h2", "h3", "h4", "h5"))
+        # design.genStepBackshort(
+        #     a=9.525,
+        #     b=4.7625,
+        #     step_heights=step_heights,
+        #     shrink=1.5,
+        #     shifts=(0, -4.7625, -0.34575),
+        # )
 
         # Create step file for Finshape
         design = lib_RFdesign.ConvexFinshape(model_path=model_paths[1])

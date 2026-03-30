@@ -239,6 +239,109 @@ class ConvexBackshort(Convex):
         }
 
 
+    def genStepBackshortCont(
+        self,
+        a=9.525,
+        b=4.7625,
+        step_heights=(2.0, 2.0, 2.0, 2.0, 2.0),
+        shrink_params=(1.0, 0.2, 0.2, 0.2, 0.2),
+        shifts=(0, -4.7625, -0.34575),
+    ):
+        """
+        Generates a 5-step negative-Z step-backshort with monotonic per-step XY shrink factors.
+
+        Parameters
+        ----------
+        a, b : float
+            Base half-widths in X/Y.
+        step_heights : sequence[float]
+            Per-step thickness values (5 steps). Each entry is stacked along negative Z.
+        shrink_params : sequence[float]
+            Re-parameterized shrink controls used to guarantee monotonic ordering.
+            The tuple must be (s1, s2, s3, s4, s5), where:
+              all values > 0
+            and shrinks are reconstructed as cumulative values:
+              h1 = s1
+              h2 = h1 + s2
+              h3 = h2 + s3
+              h4 = h3 + s4
+              h5 = h4 + s5
+            This guarantees h1 < h2 < h3 < h4 < h5.
+        shifts : tuple[float, float, float]
+            Final translation applied to the stacked solid.
+        """
+        shift_x, shift_y, shift_z = shifts
+
+        heights = [float(h) for h in step_heights]
+        sp = [float(v) for v in shrink_params]
+
+        if len(heights) != 5:
+            raise ValueError('step_heights must contain exactly 5 values.')
+        if len(sp) != 5:
+            raise ValueError('shrink_params must contain exactly 5 values: (s1, s2, s3, s4, s5).')
+        if any(h <= 0.0 for h in heights):
+            raise ValueError('All step_heights values must be positive.')
+
+        s1, s2, s3, s4, s5 = sp
+        if any(v <= 0.0 for v in (s1, s2, s3, s4, s5)):
+            raise ValueError('s1..s5 must be positive.')
+
+        shrink_vals = [
+            s1,
+            s1 + s2,
+            s1 + s2 + s3,
+            s1 + s2 + s3 + s4,
+            s1 + s2 + s3 + s4 + s5,
+        ]
+
+        solid = None
+        z_cursor = 0.0
+        for height, shrink in zip(heights, shrink_vals):
+            half_x = float(a) / shrink
+            half_y = float(b) / shrink
+            width_x = 2.0 * half_x
+            width_y = 2.0 * half_y
+            z_min = -(z_cursor + height)
+
+            box = (
+                cq.Workplane('XY')
+                .box(width_x, width_y, height, centered=(True, True, False))
+                .translate((0.0, 0.0, z_min))
+            )
+            solid = box if solid is None else solid.union(box)
+            z_cursor += height
+
+        boxes = []
+        z_cursor = 0.0
+        for height, shrink in zip(heights, shrink_vals):
+            half_x = float(a) / shrink
+            half_y = float(b) / shrink
+            z_min = -(z_cursor + height)
+            boxes.append({
+                'x_min': -half_x + shift_x,
+                'x_max': half_x + shift_x,
+                'y_min': -half_y + shift_y,
+                'y_max': half_y + shift_y,
+                'z_min': z_min + shift_z,
+                'z_max': z_min + height + shift_z,
+            })
+            z_cursor += height
+
+        solid = solid.translate((shift_x, shift_y, shift_z))
+        exporters.export(solid, str(self.model_path))
+        return {
+            'type': 'stepbackshort_cont',
+            'base_half_width': (float(a), float(b)),
+            'step_heights': heights,
+            'n_steps': len(heights),
+            'shrink_params': sp,
+            'shrinks': shrink_vals,
+            'total_depth': float(sum(heights)),
+            'boxes': boxes,
+        }
+
+
+
 class ConvexFinshape(Convex):
     
     def genFinshape(self, a=6, b=6, k=2, grid_res=400, shifts=(0.0, -1.0)):
