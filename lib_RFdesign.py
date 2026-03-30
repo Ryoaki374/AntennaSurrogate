@@ -258,15 +258,14 @@ class ConvexBackshort(Convex):
             Per-step thickness values (5 steps). Each entry is stacked along negative Z.
         shrink_params : sequence[float]
             Re-parameterized shrink controls used to guarantee monotonic ordering.
-            The tuple must be (s1, s2, s3, s4, s5), where:
-              all values > 0
-            and shrinks are reconstructed as cumulative values:
-              h1 = s1
-              h2 = h1 + s2
-              h3 = h2 + s3
-              h4 = h3 + s4
-              h5 = h4 + s5
-            This guarantees h1 < h2 < h3 < h4 < h5.
+            The tuple must be (s1, s2, s3, s4, s5), where all values > 0.
+            Per-step shrink factors are reconstructed cumulatively as:
+              shrink_1 = s1
+              shrink_2 = s1 + s2
+              shrink_3 = s1 + s2 + s3
+              shrink_4 = s1 + s2 + s3 + s4
+              shrink_5 = s1 + s2 + s3 + s4 + s5
+            This guarantees shrink_1 < shrink_2 < shrink_3 < shrink_4 < shrink_5.
         shifts : tuple[float, float, float]
             Final translation applied to the stacked solid.
         """

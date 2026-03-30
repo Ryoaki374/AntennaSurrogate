@@ -114,11 +114,12 @@ class Backbone:
         # Create step file for Backshort
         design = lib_RFdesign.ConvexBackshort(model_path=model_paths[0])
         backshort_group = grouped_values["A"]
+        step_heights = tuple(float(backshort_group[name]) for name in ("h1", "h2", "h3", "h4", "h5"))
         shrink_params = tuple(float(backshort_group[name]) for name in ("s1", "s2", "s3", "s4", "s5"))
         design.genStepBackshortCont(
             a=9.525,
             b=4.7625,
-            step_heights=(2.0, 2.0, 2.0, 2.0, 2.0),
+            step_heights=step_heights,
             shrink_params=shrink_params,
             shifts=(0, -4.7625, -0.34575),
         )
