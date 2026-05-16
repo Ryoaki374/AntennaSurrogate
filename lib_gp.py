@@ -277,6 +277,7 @@ class GaussianProcess:
             base_kernel = MaternKernel(nu=2.5, ard_num_dims=dims)
         else:
             raise ValueError(f"Unsupported kernel_type: {self.cfg.opt.kernel_type}")
+        base_kernel.initialize(lengthscale=float(self.cfg.opt.length_scale))
         return ScaleKernel(base_kernel)
 
     def _extract_length_scale(self) -> float:
