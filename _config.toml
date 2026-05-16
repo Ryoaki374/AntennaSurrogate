@@ -39,9 +39,9 @@
 #    filename_models = ["Backshort.step", "Finshape.step"]
 
 [hfss]
-    n_simulation = 50
-    n_repeats = 1
-    n_init = 15
+    n_simulation = 100
+    n_repeats = 5
+    n_init = 20
     n_params = 13
     group_order = ["A", "B"]
     filename_models = ["Backshort.step", "Finshape.step"]
@@ -74,8 +74,8 @@
     # with s1..s5 > 0, this guarantees shrink_1 < ... < shrink_5.
     param_names  = ["h1", "h2", "h3", "h4", "h5", "s1", "s2", "s3", "s4", "s5"]
     param_units  = ["mm", "mm", "mm", "mm", "mm", "", "", "", "", ""]
-    lower_bounds = [1.0, 1.0, 1.0, 1.0, 1.0, 0.8, 0.05, 0.05, 0.05, 0.05]
-    upper_bounds = [5.0, 5.0, 5.0, 5.0, 5.0, 2.5, 1.5, 1.5, 1.5, 1.5]
+    lower_bounds = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0]
+    upper_bounds = [10.0, 10.0, 10.0, 10.0, 10.0, 2.0, 2.0, 2.0, 2.0, 2.0]
     baseline     = [2.0, 2.0, 2.0, 2.0, 2.0, 1.0, 0.2, 0.2, 0.2, 0.2]
     vary         = true
 
@@ -90,7 +90,7 @@
     param_names  = ["a", "b", "k"]
     param_units  = ["mm", "mm", ""]
     lower_bounds = [2, 2, 1]
-    upper_bounds = [8, 8, 6]
+    upper_bounds = [7, 7, 6]
     baseline     = [4.0, 6.0, 2.0]
     vary         = true
 

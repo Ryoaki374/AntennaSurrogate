@@ -28,7 +28,6 @@ if os.path.exists(LOG_PATH):
     os.remove(LOG_PATH)
 printlog("--- HFSS Subroutine Script Initialized ---")
 
-
 # --- Load Settings from Config File ---
 try:
     printlog("Loading configuration from: {}".format(CONFIG_PATH))
@@ -68,7 +67,7 @@ except AttributeError:
 report_name = "S11_Export_Report"
 temp_export_path = os.path.join(WATCH_DIR, "temp_hfss_export.csv")
 
-
+#'''
 def runSimulation():
     try:
             # model import
@@ -196,6 +195,16 @@ def runSimulation():
                 except:
                     printlog("[ERROR] Could not delete input file.")
 
+            #Validation
+            try:
+               check = oDesign.ValidateDesign()
+               if check == 1:
+                   printlog("Design validated successfully.")
+               else:
+                   printlog("Design validation failed.")
+            except:
+               printlog("[ERROR] Design validation failed with an exception.")
+               
             # solve
             oDesign.Analyze("Setup1 : Sweep")
             printlog("[State] Solve complete.")
@@ -287,3 +296,5 @@ while True:
     time.sleep(1)
 
 printlog("--- All Completed ---")
+
+#'''

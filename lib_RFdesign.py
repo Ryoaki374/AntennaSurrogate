@@ -282,7 +282,7 @@ class ConvexBackshort(Convex):
             raise ValueError('All step_heights values must be positive.')
 
         s1, s2, s3, s4, s5 = sp
-        if any(v <= 0.0 for v in (s1, s2, s3, s4, s5)):
+        if any(v < 0.0 for v in (s1, s2, s3, s4, s5)):
             raise ValueError('s1..s5 must be positive.')
 
         shrink_vals = [
@@ -296,8 +296,12 @@ class ConvexBackshort(Convex):
         solid = None
         z_cursor = 0.0
         for height, shrink in zip(heights, shrink_vals):
-            half_x = float(a) / shrink
-            half_y = float(b) / shrink
+            if shrink < 1e-5:
+                half_x = float(a)
+                half_y = float(b)
+            else:
+                half_x = float(a) / shrink
+                half_y = float(b) / shrink
             width_x = 2.0 * half_x
             width_y = 2.0 * half_y
             z_min = -(z_cursor + height)
@@ -313,8 +317,12 @@ class ConvexBackshort(Convex):
         boxes = []
         z_cursor = 0.0
         for height, shrink in zip(heights, shrink_vals):
-            half_x = float(a) / shrink
-            half_y = float(b) / shrink
+            if shrink < 1e-5:
+                half_x = float(a)
+                half_y = float(b)
+            else:
+                half_x = float(a) / shrink
+                half_y = float(b) / shrink
             z_min = -(z_cursor + height)
             boxes.append({
                 'x_min': -half_x + shift_x,
