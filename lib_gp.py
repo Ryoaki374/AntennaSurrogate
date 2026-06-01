@@ -493,13 +493,20 @@ class GaussianProcess:
                 n_perturb=int(params.get("n_perturb", 64)),
                 kappa=float(params.get("kappa", 1.0)),
                 n_candidates=params.get("n_candidates", None),
+                active_indices=active_indices,
+                fixed_point=fixed_point,
             )
 
             # standard LCB random-search alternative for direct comparison:
             # x_new, acq_value = optimize_lcb_by_random_search(
-            #     gp=self, bounds=bounds, rng=rng, kappa=float(params.get("kappa", 1.0))
+            #     gp=self,
+            #     bounds=bounds,
+            #     rng=rng,
+            #     kappa=float(params.get("kappa", 1.0)),
+            #     active_indices=active_indices,
+            #     fixed_point=fixed_point,
             # )
-            return x_new, {"acq": acq_value, "length_scale": self.length_scale}
+            return x_new, {"acq": acq_value, "length_scale": self.length_scale, "method": acq_name}
 
         # standard LCB / EI BoTorch path
         x_new, acq_value = self.optAcquisition(
@@ -697,15 +704,32 @@ def optimize_lcb_by_random_search(
     rng,
     kappa=1.0,
     n_candidates=None,
+    active_indices: Optional[List[int]] = None,
+    fixed_point: Optional[np.ndarray] = None,
 ):
     """Minimize the standard LCB, mu(x) - kappa * sigma(x), by random search."""
     if rng is None:
         rng = np.random.default_rng()
     bounds = _as_bounds_array(bounds)
     d = bounds.shape[0]
+    active = list(range(d)) if active_indices is None else list(active_indices)
     if n_candidates is None:
-        n_candidates = max(256, 64 * d)
-    X_cand = rng.uniform(bounds[:, 0], bounds[:, 1], size=(int(n_candidates), d))
+        n_candidates = max(256, 64 * len(active))
+
+    if len(active) == d:
+        X_cand = rng.uniform(bounds[:, 0], bounds[:, 1], size=(int(n_candidates), d))
+    else:
+        if fixed_point is None:
+            raise ValueError("fixed_point is required when active_indices is provided.")
+        fixed_point = np.asarray(fixed_point, dtype=float).reshape(-1)
+        X_cand = np.tile(fixed_point, (int(n_candidates), 1))
+        X_cand[:, active] = rng.uniform(
+            bounds[active, 0],
+            bounds[active, 1],
+            size=(int(n_candidates), len(active)),
+        )
+        X_cand = np.clip(X_cand, bounds[:, 0], bounds[:, 1])
+
     mu, std = gp.predict(X_cand, return_std=True)
     values = np.asarray(mu, dtype=float).reshape(-1) - float(kappa) * np.asarray(std, dtype=float).reshape(-1)
     best_idx = int(np.argmin(values))
@@ -720,6 +744,8 @@ def optimize_robust_lcb_by_random_search(
     n_perturb=64,
     kappa=1.0,
     n_candidates=None,
+    active_indices: Optional[List[int]] = None,
+    fixed_point: Optional[np.ndarray] = None,
 ):
     """Minimize robust LCB on J(x) by random search with common perturbations."""
     if rng is None:
@@ -727,12 +753,26 @@ def optimize_robust_lcb_by_random_search(
     Sigma = np.asarray(Sigma, dtype=float)
     bounds = _as_bounds_array(bounds)
     d = bounds.shape[0]
+    active = list(range(d)) if active_indices is None else list(active_indices)
     if Sigma.shape != (d, d):
         raise ValueError("Sigma must have shape (d, d).")
     if n_candidates is None:
-        n_candidates = max(256, 64 * d)
+        n_candidates = max(256, 64 * len(active))
 
-    X_cand = rng.uniform(bounds[:, 0], bounds[:, 1], size=(int(n_candidates), d))
+    if len(active) == d:
+        X_cand = rng.uniform(bounds[:, 0], bounds[:, 1], size=(int(n_candidates), d))
+    else:
+        if fixed_point is None:
+            raise ValueError("fixed_point is required when active_indices is provided.")
+        fixed_point = np.asarray(fixed_point, dtype=float).reshape(-1)
+        X_cand = np.tile(fixed_point, (int(n_candidates), 1))
+        X_cand[:, active] = rng.uniform(
+            bounds[active, 0],
+            bounds[active, 1],
+            size=(int(n_candidates), len(active)),
+        )
+        X_cand = np.clip(X_cand, bounds[:, 0], bounds[:, 1])
+
     L_sigma = np.linalg.cholesky(Sigma + 1e-12 * np.eye(d))
     standard_normals = rng.normal(size=(int(n_perturb), d))
     perturbations = standard_normals @ L_sigma.T
