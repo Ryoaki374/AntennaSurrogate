@@ -317,6 +317,48 @@ class GaussianProcess:
         self.train_Y_model = train_Y_model
         self.length_scale = self._extract_length_scale()
 
+    def fit(self, X_train, y_train):
+        """Fit the GP using the sklearn-like API expected by LCB helpers."""
+        self.run_gp(X_train, y_train)
+        return self
+
+    def predict(self, X, return_std: bool = False, return_cov: bool = False):
+        """Predict posterior quantities on the original minimization scale.
+
+        The internal BoTorch model is trained on ``-y`` so that existing BoTorch
+        acquisitions can maximize improvement.  This method converts the mean
+        back to the original objective scale while keeping variances/covariances
+        unchanged.
+        """
+        self._require_botorch()
+        if self.model is None:
+            raise RuntimeError("GaussianProcess must be fit before calling predict.")
+        if return_std and return_cov:
+            raise ValueError("Only one of return_std and return_cov may be True.")
+
+        X_np = np.asarray(X, dtype=np.float64)
+        if X_np.ndim == 1:
+            X_np = X_np.reshape(1, -1)
+        X_tensor = torch.tensor(X_np, dtype=self.dtype, device=self.device)
+
+        with torch.no_grad():
+            posterior = self.model.posterior(X_tensor)
+            mean_model = posterior.mean.detach().cpu().view(-1).double().numpy()
+            mu = -mean_model
+
+            if return_cov:
+                cov = posterior.mvn.covariance_matrix.detach().cpu().double().numpy()
+                cov = np.asarray(cov, dtype=float).reshape(X_np.shape[0], X_np.shape[0])
+                cov = 0.5 * (cov + cov.T)
+                return mu, cov
+
+            if return_std:
+                var = posterior.variance.detach().cpu().view(-1).double().numpy()
+                std = np.sqrt(np.maximum(var, 0.0))
+                return mu, std
+
+        return mu
+
     def _build_acquisition(self, acq_func, acq_params: dict):
         name = getattr(acq_func, "__name__", "") if acq_func is not None else ""
         params = dict(acq_params or {})
@@ -422,6 +464,51 @@ class GaussianProcess:
         if acq_params is None:
             acq_params = {"kappa": 2.0}
 
+        params = dict(acq_params or {})
+        acq_name = getattr(acq_func, "__name__", "") if acq_func is not None else ""
+        acq_name = str(params.get("name", acq_name)).lower()
+        if acq_name in {"robust_lcb_on_j", "robust_lcb", "rlcb"}:
+            bounds = np.vstack([np.asarray(lower_bounds, dtype=float), np.asarray(upper_bounds, dtype=float)]).T
+            d = bounds.shape[0]
+            Sigma = params.get("Sigma", params.get("sigma", None))
+            if Sigma is None:
+                perturbation_std = np.asarray(
+                    params.get("perturbation_std", 0.01 * (bounds[:, 1] - bounds[:, 0])),
+                    dtype=float,
+                )
+                if perturbation_std.ndim == 0:
+                    perturbation_std = np.full(d, float(perturbation_std))
+                Sigma = np.diag(perturbation_std ** 2)
+
+            rng = params.get("rng", None)
+            if rng is None:
+                rng = np.random.default_rng(params.get("seed", None))
+
+            # robust LCB on J(x)
+            x_new, acq_value = optimize_robust_lcb_by_random_search(
+                gp=self,
+                Sigma=Sigma,
+                bounds=bounds,
+                rng=rng,
+                n_perturb=int(params.get("n_perturb", 64)),
+                kappa=float(params.get("kappa", 1.0)),
+                n_candidates=params.get("n_candidates", None),
+                active_indices=active_indices,
+                fixed_point=fixed_point,
+            )
+
+            # standard LCB random-search alternative for direct comparison:
+            # x_new, acq_value = optimize_lcb_by_random_search(
+            #     gp=self,
+            #     bounds=bounds,
+            #     rng=rng,
+            #     kappa=float(params.get("kappa", 1.0)),
+            #     active_indices=active_indices,
+            #     fixed_point=fixed_point,
+            # )
+            return x_new, {"acq": acq_value, "length_scale": self.length_scale, "method": acq_name}
+
+        # standard LCB / EI BoTorch path
         x_new, acq_value = self.optAcquisition(
             acq_func=acq_func,
             X_sample=X_sample,
@@ -516,6 +603,229 @@ def expected_improvement(x_new, X_sample, y_sample, Ky_opt_inv, length_scale, xi
 def negative_expected_improvement(x_new, X_sample, y_sample, Ky_opt_inv, length_scale, xi=0.01):
     return -expected_improvement(x_new, X_sample, y_sample, Ky_opt_inv, length_scale, xi)
 
+
+
+def _as_bounds_array(bounds) -> np.ndarray:
+    bounds = np.asarray(bounds, dtype=float)
+    if bounds.ndim != 2:
+        raise ValueError("bounds must have shape (d, 2) or (2, d).")
+    if bounds.shape[1] == 2:
+        return bounds
+    if bounds.shape[0] == 2:
+        return bounds.T
+    raise ValueError("bounds must have shape (d, 2) or (2, d).")
+
+
+def sample_input_perturbations(x, Sigma, n_samples, bounds, rng):
+    """Sample clipped Gaussian input perturbation points around ``x``.
+
+    Returns ``clip(x + delta, bounds)`` with shape ``(n_samples, d)``.
+    """
+    if rng is None:
+        rng = np.random.default_rng()
+    x = np.asarray(x, dtype=float).reshape(-1)
+    Sigma = np.asarray(Sigma, dtype=float)
+    bounds = _as_bounds_array(bounds)
+    d = x.size
+    if Sigma.shape != (d, d):
+        raise ValueError("Sigma must have shape (d, d).")
+    if bounds.shape != (d, 2):
+        raise ValueError("bounds must match x dimension.")
+
+    deltas = rng.multivariate_normal(mean=np.zeros(d), cov=Sigma, size=int(n_samples))
+    Z = x.reshape(1, -1) + deltas
+    return np.clip(Z, bounds[:, 0], bounds[:, 1])
+
+
+def robust_lcb_on_J(
+    x,
+    gp,
+    Sigma,
+    bounds,
+    n_perturb=64,
+    kappa=1.0,
+    rng=None,
+    perturbations=None,
+    eps=1e-12,
+    return_details=False,
+):
+    """Compute robust LCB for J(x)=E_delta[f(x+delta)] using GP covariance."""
+    if rng is None:
+        rng = np.random.default_rng()
+    x = np.asarray(x, dtype=float).reshape(-1)
+    Sigma = np.asarray(Sigma, dtype=float)
+    bounds = _as_bounds_array(bounds)
+    M = int(n_perturb)
+    if M <= 0:
+        raise ValueError("n_perturb must be positive.")
+
+    if perturbations is None:
+        Z = sample_input_perturbations(x, Sigma, M, bounds, rng)
+    else:
+        perturbations = np.asarray(perturbations, dtype=float)
+        if perturbations.ndim != 2 or perturbations.shape[1] != x.size:
+            raise ValueError("perturbations must have shape (n_perturb, d).")
+        M = perturbations.shape[0]
+        Z = np.clip(x.reshape(1, -1) + perturbations, bounds[:, 0], bounds[:, 1])
+
+    mu_Z, cov_Z = gp.predict(Z, return_cov=True)
+    mu_Z = np.asarray(mu_Z, dtype=float).reshape(-1)
+    cov_Z = np.asarray(cov_Z, dtype=float).reshape(M, M)
+    cov_Z = 0.5 * (cov_Z + cov_Z.T)
+
+    mu_J = float(np.mean(mu_Z))
+    var_J = float(np.sum(cov_Z) / (M ** 2))
+    var_J = max(var_J, float(eps))
+    sigma_J = float(np.sqrt(var_J))
+    lcb_J = float(mu_J - float(kappa) * sigma_J)
+    if M <= 1:
+        posterior_mu_sample_std = 0.0
+    else:
+        posterior_mu_sample_std = float(
+            np.sqrt(np.sum((mu_Z - mu_J) ** 2) / (M - 1))
+        )
+
+    if not return_details:
+        return lcb_J
+    return {
+        "lcb": lcb_J,
+        "mu_J": mu_J,
+        "sigma_J": sigma_J,
+        "var_J": var_J,
+        "posterior_mu_sample_std": posterior_mu_sample_std,
+        "Z": Z,
+        "mu_Z": mu_Z,
+    }
+
+
+def optimize_lcb_by_random_search(
+    gp,
+    bounds,
+    rng,
+    kappa=1.0,
+    n_candidates=None,
+    active_indices: Optional[List[int]] = None,
+    fixed_point: Optional[np.ndarray] = None,
+):
+    """Minimize the standard LCB, mu(x) - kappa * sigma(x), by random search."""
+    if rng is None:
+        rng = np.random.default_rng()
+    bounds = _as_bounds_array(bounds)
+    d = bounds.shape[0]
+    active = list(range(d)) if active_indices is None else list(active_indices)
+    if n_candidates is None:
+        n_candidates = max(256, 64 * len(active))
+
+    if len(active) == d:
+        X_cand = rng.uniform(bounds[:, 0], bounds[:, 1], size=(int(n_candidates), d))
+    else:
+        if fixed_point is None:
+            raise ValueError("fixed_point is required when active_indices is provided.")
+        fixed_point = np.asarray(fixed_point, dtype=float).reshape(-1)
+        X_cand = np.tile(fixed_point, (int(n_candidates), 1))
+        X_cand[:, active] = rng.uniform(
+            bounds[active, 0],
+            bounds[active, 1],
+            size=(int(n_candidates), len(active)),
+        )
+        X_cand = np.clip(X_cand, bounds[:, 0], bounds[:, 1])
+
+    mu, std = gp.predict(X_cand, return_std=True)
+    values = np.asarray(mu, dtype=float).reshape(-1) - float(kappa) * np.asarray(std, dtype=float).reshape(-1)
+    best_idx = int(np.argmin(values))
+    return X_cand[best_idx], float(values[best_idx])
+
+
+def optimize_robust_lcb_by_random_search(
+    gp,
+    Sigma,
+    bounds,
+    rng,
+    n_perturb=64,
+    kappa=1.0,
+    n_candidates=None,
+    active_indices: Optional[List[int]] = None,
+    fixed_point: Optional[np.ndarray] = None,
+):
+    """Minimize robust LCB on J(x) by random search with common perturbations."""
+    if rng is None:
+        rng = np.random.default_rng()
+    Sigma = np.asarray(Sigma, dtype=float)
+    bounds = _as_bounds_array(bounds)
+    d = bounds.shape[0]
+    active = list(range(d)) if active_indices is None else list(active_indices)
+    if Sigma.shape != (d, d):
+        raise ValueError("Sigma must have shape (d, d).")
+    if n_candidates is None:
+        n_candidates = max(256, 64 * len(active))
+
+    if len(active) == d:
+        X_cand = rng.uniform(bounds[:, 0], bounds[:, 1], size=(int(n_candidates), d))
+    else:
+        if fixed_point is None:
+            raise ValueError("fixed_point is required when active_indices is provided.")
+        fixed_point = np.asarray(fixed_point, dtype=float).reshape(-1)
+        X_cand = np.tile(fixed_point, (int(n_candidates), 1))
+        X_cand[:, active] = rng.uniform(
+            bounds[active, 0],
+            bounds[active, 1],
+            size=(int(n_candidates), len(active)),
+        )
+        X_cand = np.clip(X_cand, bounds[:, 0], bounds[:, 1])
+
+    L_sigma = np.linalg.cholesky(Sigma + 1e-12 * np.eye(d))
+    standard_normals = rng.normal(size=(int(n_perturb), d))
+    perturbations = standard_normals @ L_sigma.T
+
+    values = np.array([
+        robust_lcb_on_J(
+            x,
+            gp,
+            Sigma,
+            bounds,
+            n_perturb=n_perturb,
+            kappa=kappa,
+            perturbations=perturbations,
+        )
+        for x in X_cand
+    ], dtype=float)
+    best_idx = int(np.argmin(values))
+    return X_cand[best_idx], float(values[best_idx])
+
+
+def robust_validation_summary(candidates, gp, Sigma, bounds, rng=None, n_perturb=64, eps=1e-12):
+    """Summarize nominal and robust posterior quantities for candidate points."""
+    if rng is None:
+        rng = np.random.default_rng()
+    summary = {}
+    for name, x in candidates.items():
+        x_arr = np.asarray(x, dtype=float).reshape(1, -1)
+        nominal_mu, nominal_std = gp.predict(x_arr, return_std=True)
+        details = robust_lcb_on_J(
+            x_arr.reshape(-1),
+            gp,
+            Sigma,
+            bounds,
+            n_perturb=n_perturb,
+            kappa=0.0,
+            rng=rng,
+            eps=eps,
+            return_details=True,
+        )
+        summary[name] = {
+            "nominal_posterior_mean": float(np.asarray(nominal_mu).reshape(-1)[0]),
+            "nominal_posterior_std": float(np.asarray(nominal_std).reshape(-1)[0]),
+            "posterior_robust_mean": details["mu_J"],
+            "posterior_robust_std": details["sigma_J"],
+            "posterior_mu_sample_std": details["posterior_mu_sample_std"],
+        }
+    if summary:
+        robust_best_name = min(summary, key=lambda key: summary[key]["posterior_robust_mean"])
+        summary["robust_best"] = {
+            "name": robust_best_name,
+            "posterior_robust_mean": summary[robust_best_name]["posterior_robust_mean"],
+        }
+    return summary
 
 def lower_confidence_bound(
     x_new, X_sample, y_sample, Ky_opt_inv, length_scale, kappa=2.0
