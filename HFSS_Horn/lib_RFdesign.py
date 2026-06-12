@@ -198,10 +198,19 @@ class ConvexHorn(Convex):
         curve_pts : (N, 2) ndarray
             Closed (r, z) profile polyline, usable with plotProfile2D.
         """
+        d_aperture = float(d_aperture)
+        d_middle = float(d_middle)
+        d_waveguide = float(d_waveguide)
+        total_length = float(total_length)
+        if any(v <= 0.0 for v in (d_aperture, d_middle, d_waveguide, total_length)):
+            raise ValueError("Horn diameters and total_length must be positive.")
+        if not (d_waveguide < d_middle < d_aperture):
+            raise ValueError("Horn diameters must satisfy d_waveguide < d_middle < d_aperture.")
+
         fr = np.asarray(section_fracs, dtype=float)
         if fr.size != 5 or np.any(fr <= 0):
             raise ValueError("section_fracs must be 5 positive fractions.")
-        if not np.isclose(fr.sum(), 1.0):
+        if not np.isclose(fr.sum(), 1.0, atol=1.0e-8):
             raise ValueError("section_fracs must sum to 1.")
 
         r_wg, r_mid, r_ap = d_waveguide/2.0, d_middle/2.0, d_aperture/2.0
