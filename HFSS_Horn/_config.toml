@@ -1,0 +1,55 @@
+# _config.toml
+
+# ------------------------------------------------------------  IO
+[io]
+    filename_input  = "params.csv"      # temporary csv file for setting HFSS params
+    filename_output = "results.csv"     # csv file for storing results
+    filename_temp   = "temp_hfss_export.csv" # temporary csv file for passing results
+
+# ------------------------------------------------------------  GP Hyperparams
+[opt]
+    kernel_type     = "Matern52" # kernel name: RBF or Matern52
+    length_scale    = 3 # sqrt(n_params)
+    #length_scale    = 1.00
+    noise_std       = 0.01
+    noise_var       = 0.0001
+
+
+# ------------------------------------------------------------  Runtime
+[runtime]
+    round_decimals = 10
+    grad_fd_rel_step = 0.05         # finite-difference step as a fraction of each parameter range
+    grad_explore_step_ratios = [0.5, 0.25, 0.1]  # trial step sizes for a broader pre-search move
+    grad_lbfgs_maxls = 40           # allow a deeper line search once a broader start is chosen
+    grad_db_fd_rel_step = 0.02      # finite-difference step for the simpler gradient_db routine
+    grad_db_init_step_ratio = 0.25  # first trial step as a fraction of the active parameter ranges
+    grad_db_backtrack_beta = 0.5    # shrink factor used when the Armijo condition fails
+    grad_db_armijo_c = 1.0e-4       # sufficient-decrease condition for backtracking line search
+    grad_db_min_step_ratio = 1.0e-3 # stop shrinking when the step gets too small
+
+# ------------------------------------------------------------  HFSS simulation
+[hfss]
+    n_simulation = 100
+    n_repeats = 1
+    n_init = 20
+    n_params = 9
+    group_order = ["A",]
+    filename_models = ["Horn.step"]
+
+    [hfss.param_groups.A]
+    param_names  = ["d_a", "d_m", "d_wg", "l_tot", "f_wg", "f_t1", "f_mid", "f_t2", "f_ap"]
+    param_units  = ["mm", "mm", "mm", "mm", "", "", "", "", ""]
+    lower_bounds = [1.0, 1.0, 0.5,  1.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    upper_bounds = [20.0, 20.0, 5.0, 50.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+    baseline     = [11.6, 6.4, 1.80, 20.0, 0.18, 0.27, 0.21, 0.20, 0.14]
+    vary         = true
+
+# ------------------------------------------------------------  Synthetic Test Function
+[test]
+    n_simulation    = 130
+    n_repeats       = 1     # total nuber of iterations
+    n_init          = 30
+    n_params        = 10
+    lower_bounds    = [-32, -32, -32, -32, -32, -32, -32, -32, -32, -32]
+    upper_bounds    = [32, 32, 32, 32, 32, 32, 32, 32, 32, 32]
+    param_names     = ['x1', 'x2', 'x3', 'x4', 'x5', 'x6', 'x7', 'x8', 'x9', 'x10',]
