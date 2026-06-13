@@ -68,12 +68,9 @@ def enforce_section_frac_constraint(x, lower_bounds=None, upper_bounds=None, dec
         raise ValueError("Horn parameter vector must contain d_m, l_tot, and five section fractions.")
 
     if lower_bounds is None:
-        lower = np.full(5, MIN_SECTION_FRAC, dtype=float)
+        lower = np.zeros(5, dtype=float)
     else:
-        lower = np.maximum(
-            np.asarray(lower_bounds, dtype=float).flatten()[SECTION_FRAC_SLICE],
-            MIN_SECTION_FRAC,
-        )
+        lower = np.asarray(lower_bounds, dtype=float).flatten()[SECTION_FRAC_SLICE]
     if upper_bounds is None:
         upper = np.ones(5, dtype=float)
     else:
@@ -84,11 +81,10 @@ def enforce_section_frac_constraint(x, lower_bounds=None, upper_bounds=None, dec
     )
     if decimals is not None:
         arr = np.round(arr, int(decimals))
-        arr[0] = np.clip(
-            arr[0],
-            FIXED_D_WAVEGUIDE + DIAMETER_ATOL,
-            FIXED_D_APERTURE - DIAMETER_ATOL,
-        )
+        if lower_bounds is not None and upper_bounds is not None:
+            lower_all = np.asarray(lower_bounds, dtype=float).flatten()
+            upper_all = np.asarray(upper_bounds, dtype=float).flatten()
+            arr[0] = np.clip(arr[0], lower_all[0], upper_all[0])
         # Rounding can introduce a tiny sum error. Correct the largest free fraction.
         residual = 1.0 - arr[SECTION_FRAC_SLICE].sum()
         if abs(residual) > 0.0:
