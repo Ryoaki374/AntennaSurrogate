@@ -19,6 +19,8 @@ SECTION_FRAC_NAMES = ("f_wg", "f_t1", "f_mid", "f_t2", "f_ap")
 SECTION_FRAC_ATOL = 1.0e-8
 FIXED_D_APERTURE = 11.6
 FIXED_D_WAVEGUIDE = 1.8
+DIAMETER_ATOL = 1.0e-6
+MIN_SECTION_FRAC = 1.0e-6
 
 
 def section_frac_sum_constraint(x):
@@ -67,10 +69,22 @@ def enforce_section_frac_constraint(x, lower_bounds=None, upper_bounds=None, dec
     if arr.size < SECTION_FRAC_SLICE.stop:
         raise ValueError("Horn parameter vector must contain d_m, l_tot, and five section fractions.")
 
+    # d_m is optimized, while d_aperture and d_waveguide are fixed. Keep
+    # generated/suggested values inside the strict geometry requirement used by
+    # ConvexHorn: d_waveguide < d_m < d_aperture.
+    arr[0] = np.clip(
+        arr[0],
+        FIXED_D_WAVEGUIDE + DIAMETER_ATOL,
+        FIXED_D_APERTURE - DIAMETER_ATOL,
+    )
+
     if lower_bounds is None:
-        lower = np.zeros(5, dtype=float)
+        lower = np.full(5, MIN_SECTION_FRAC, dtype=float)
     else:
-        lower = np.asarray(lower_bounds, dtype=float).flatten()[SECTION_FRAC_SLICE]
+        lower = np.maximum(
+            np.asarray(lower_bounds, dtype=float).flatten()[SECTION_FRAC_SLICE],
+            MIN_SECTION_FRAC,
+        )
     if upper_bounds is None:
         upper = np.ones(5, dtype=float)
     else:
@@ -81,6 +95,11 @@ def enforce_section_frac_constraint(x, lower_bounds=None, upper_bounds=None, dec
     )
     if decimals is not None:
         arr = np.round(arr, int(decimals))
+        arr[0] = np.clip(
+            arr[0],
+            FIXED_D_WAVEGUIDE + DIAMETER_ATOL,
+            FIXED_D_APERTURE - DIAMETER_ATOL,
+        )
         # Rounding can introduce a tiny sum error. Correct the largest free fraction.
         residual = 1.0 - arr[SECTION_FRAC_SLICE].sum()
         if abs(residual) > 0.0:
