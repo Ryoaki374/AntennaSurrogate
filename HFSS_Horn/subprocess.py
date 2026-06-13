@@ -133,6 +133,60 @@ def runSimulation():
                     "IsLightweight:=", False
                 ])
 
+            # boundary assignment
+            oBoundaryModule = oDesign.GetModule("BoundarySetup")
+            oBoundaryModule.AssignRadiation(
+                [
+                    "NAME:Rad1",
+                    "Faces:=", [16]
+                ])
+
+            # split Horn into the positive YZ/ZX half model before assigning symmetry boundaries
+            oEditor = oDesign.SetActiveEditor("3D Modeler")
+            oEditor.Split(
+                [
+                    "NAME:Selections",
+                    "Selections:=", "Horn",
+                    "NewPartsModelFlag:=", "Model"
+                ],
+                [
+                    "NAME:SplitToParameters",
+                    "SplitPlane:=", "YZ",
+                    "WhichSide:=", "PositiveOnly",
+                    "ToolType:=", "PlaneTool",
+                    "ToolEntityID:=", -1,
+                    "SplitCrossingObjectsOnly:=", False,
+                    "DeleteInvalidObjects:=", True
+                ])
+            oEditor.Split(
+                [
+                    "NAME:Selections",
+                    "Selections:=", "Horn",
+                    "NewPartsModelFlag:=", "Model"
+                ],
+                [
+                    "NAME:SplitToParameters",
+                    "SplitPlane:=", "ZX",
+                    "WhichSide:=", "PositiveOnly",
+                    "ToolType:=", "PlaneTool",
+                    "ToolEntityID:=", -1,
+                    "SplitCrossingObjectsOnly:=", False,
+                    "DeleteInvalidObjects:=", True
+                ])
+
+            oBoundaryModule.AssignSymmetry(
+                [
+                    "NAME:Sym1",
+                    "Faces:=", [2923, 2931],
+                    "IsPerfectE:=", True
+                ])
+            oBoundaryModule.AssignSymmetry(
+                [
+                    "NAME:Sym2",
+                    "Faces:=", [1468, 2942],
+                    "IsPerfectE:=", False
+                ])
+
             oProject.Save()
 
             # remove imported models
