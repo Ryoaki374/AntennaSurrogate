@@ -43,7 +43,7 @@
     # inside the strict d_waveguide < d_m < d_aperture geometry requirement.
     param_names  = ["d_m", "l_tot", "f_wg", "f_t1", "f_mid", "f_t2", "f_ap"]
     param_units  = ["mm", "mm", "", "", "", "", ""]
-    lower_bounds = [1.800001, 1.0, 0.000001, 0.000001, 0.000001, 0.000001, 0.000001]
+    lower_bounds = [1.800001, 1.0, 0.05, 0.05, 0.05, 0.05, 0.05]
     upper_bounds = [11.599999, 50.0, 0.999996, 0.999996, 0.999996, 0.999996, 0.999996]
     baseline     = [6.4, 20.0, 0.18, 0.27, 0.21, 0.20, 0.14]
     vary         = true
