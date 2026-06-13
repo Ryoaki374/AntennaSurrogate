@@ -14,9 +14,11 @@ from typing import Dict, List, Tuple, Any, Optional, Sequence, Mapping
 import lib_RFdesign
 
 
-SECTION_FRAC_SLICE = slice(4, 9)
+SECTION_FRAC_SLICE = slice(2, 7)
 SECTION_FRAC_NAMES = ("f_wg", "f_t1", "f_mid", "f_t2", "f_ap")
 SECTION_FRAC_ATOL = 1.0e-8
+FIXED_D_APERTURE = 11.6
+FIXED_D_WAVEGUIDE = 1.8
 
 
 def section_frac_sum_constraint(x):
@@ -63,7 +65,7 @@ def enforce_section_frac_constraint(x, lower_bounds=None, upper_bounds=None, dec
     """Return a copy of x with horn section fractions projected to sum exactly to 1."""
     arr = np.asarray(x, dtype=float).flatten().copy()
     if arr.size < SECTION_FRAC_SLICE.stop:
-        raise ValueError("Horn parameter vector must contain section fraction entries at indices 4:9.")
+        raise ValueError("Horn parameter vector must contain d_m, l_tot, and five section fractions.")
 
     if lower_bounds is None:
         lower = np.zeros(5, dtype=float)
@@ -195,11 +197,14 @@ class Backbone:
             raise ValueError(f"section_fracs must sum to 1.0; residual={constraint_residual}.")
 
         design = lib_RFdesign.ConvexHorn(model_path=model_paths[0])
+        d_middle = float(horn_group.get("d_m", horn_group.get("d_middle")))
+        total_length = float(horn_group.get("l_tot", horn_group.get("total_length")))
+
         design.genHorn(
-            d_aperture=float(horn_group["d_aperture"]),
-            d_middle=float(horn_group["d_middle"]),
-            d_waveguide=float(horn_group["d_waveguide"]),
-            total_length=float(horn_group["total_length"]),
+            d_aperture=FIXED_D_APERTURE,
+            d_middle=d_middle,
+            d_waveguide=FIXED_D_WAVEGUIDE,
+            total_length=total_length,
             section_fracs=section_fracs,
         )
 
