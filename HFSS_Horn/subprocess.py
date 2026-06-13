@@ -9,8 +9,8 @@ import ScriptEnv
 ScriptEnv.Initialize("Ansoft.ElectronicsDesktop")
 
 # --- Configuration & Global Constants ---
-LOG_PATH = r"T:\RAkizawa\HFSS_C2WR10\src\output_log.txt"
-CONFIG_PATH = r'T:\RAkizawa\HFSS_C2WR10\src\_config_HFSS.json'
+LOG_PATH = r"T:\RAkizawa\HFSS_Horn\src\output_log.txt"
+CONFIG_PATH = r'T:\RAkizawa\HFSS_Horn\src\_config_HFSS.json'
 
 # --- parameter definition ---
 
