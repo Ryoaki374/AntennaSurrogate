@@ -467,7 +467,16 @@ class GaussianProcess:
         params = dict(acq_params or {})
         acq_name = getattr(acq_func, "__name__", "") if acq_func is not None else ""
         acq_name = str(params.get("name", acq_name)).lower()
-        if acq_name in {"robust_lcb_on_j", "robust_lcb", "rlcb"}:
+        robust_lcb_names = {
+            "robust_lcb_on_j",
+            "robust_lcb",
+            "rlcb",
+            "robust_lcb_penalty",
+            "robust_lcb_penalty_on_j",
+            "rlcb_penalty",
+            "rlcbp",
+        }
+        if acq_name in robust_lcb_names:
             bounds = np.vstack([np.asarray(lower_bounds, dtype=float), np.asarray(upper_bounds, dtype=float)]).T
             d = bounds.shape[0]
             Sigma = params.get("Sigma", params.get("sigma", None))
@@ -484,18 +493,33 @@ class GaussianProcess:
             if rng is None:
                 rng = np.random.default_rng(params.get("seed", None))
 
-            # robust LCB on J(x)
-            x_new, acq_value = optimize_robust_lcb_by_random_search(
-                gp=self,
-                Sigma=Sigma,
-                bounds=bounds,
-                rng=rng,
-                n_perturb=int(params.get("n_perturb", 64)),
-                kappa=float(params.get("kappa", 1.0)),
-                n_candidates=params.get("n_candidates", None),
-                active_indices=active_indices,
-                fixed_point=fixed_point,
+            penalty_names = {
+                "robust_lcb_penalty",
+                "robust_lcb_penalty_on_j",
+                "rlcb_penalty",
+                "rlcbp",
+            }
+            optimizer = (
+                optimize_robust_lcb_penalty_by_random_search
+                if acq_name in penalty_names
+                else optimize_robust_lcb_by_random_search
             )
+            optimizer_kwargs = {
+                "gp": self,
+                "Sigma": Sigma,
+                "bounds": bounds,
+                "rng": rng,
+                "n_perturb": int(params.get("n_perturb", 64)),
+                "kappa": float(params.get("kappa", 1.0)),
+                "n_candidates": params.get("n_candidates", None),
+                "active_indices": active_indices,
+                "fixed_point": fixed_point,
+            }
+            if acq_name in penalty_names:
+                optimizer_kwargs["penalty_weight"] = float(params.get("penalty_weight", 0.0))
+
+            # robust LCB on J(x), optionally with a posterior-mean variation penalty.
+            x_new, acq_value = optimizer(**optimizer_kwargs)
 
             # standard LCB random-search alternative for direct comparison:
             # x_new, acq_value = optimize_lcb_by_random_search(
@@ -698,6 +722,46 @@ def robust_lcb_on_J(
     }
 
 
+def robust_lcb_penalty_on_J(
+    x,
+    gp,
+    Sigma,
+    bounds,
+    n_perturb=64,
+    kappa=1.0,
+    penalty_weight=0.0,
+    rng=None,
+    perturbations=None,
+    eps=1e-12,
+    return_details=False,
+):
+    """Compute robust LCB on J(x) plus posterior mean sample-std penalty."""
+    details = robust_lcb_on_J(
+        x,
+        gp,
+        Sigma,
+        bounds,
+        n_perturb=n_perturb,
+        kappa=kappa,
+        rng=rng,
+        perturbations=perturbations,
+        eps=eps,
+        return_details=True,
+    )
+    penalty_value = float(
+        details["mu_J"]
+        - float(kappa) * details["sigma_J"]
+        + float(penalty_weight) * details["posterior_mu_sample_std"]
+    )
+    if not return_details:
+        return penalty_value
+
+    details = dict(details)
+    details["lcb_penalty"] = penalty_value
+    details["penalty_weight"] = float(penalty_weight)
+    return details
+
+
 def optimize_lcb_by_random_search(
     gp,
     bounds,
@@ -785,6 +849,65 @@ def optimize_robust_lcb_by_random_search(
             bounds,
             n_perturb=n_perturb,
             kappa=kappa,
+            perturbations=perturbations,
+        )
+        for x in X_cand
+    ], dtype=float)
+    best_idx = int(np.argmin(values))
+    return X_cand[best_idx], float(values[best_idx])
+
+
+def optimize_robust_lcb_penalty_by_random_search(
+    gp,
+    Sigma,
+    bounds,
+    rng,
+    n_perturb=64,
+    kappa=1.0,
+    penalty_weight=0.0,
+    n_candidates=None,
+    active_indices: Optional[List[int]] = None,
+    fixed_point: Optional[np.ndarray] = None,
+):
+    """Minimize robust LCB penalty on J(x) by random search with common perturbations."""
+    if rng is None:
+        rng = np.random.default_rng()
+    Sigma = np.asarray(Sigma, dtype=float)
+    bounds = _as_bounds_array(bounds)
+    d = bounds.shape[0]
+    active = list(range(d)) if active_indices is None else list(active_indices)
+    if Sigma.shape != (d, d):
+        raise ValueError("Sigma must have shape (d, d).")
+    if n_candidates is None:
+        n_candidates = max(256, 64 * len(active))
+
+    if len(active) == d:
+        X_cand = rng.uniform(bounds[:, 0], bounds[:, 1], size=(int(n_candidates), d))
+    else:
+        if fixed_point is None:
+            raise ValueError("fixed_point is required when active_indices is provided.")
+        fixed_point = np.asarray(fixed_point, dtype=float).reshape(-1)
+        X_cand = np.tile(fixed_point, (int(n_candidates), 1))
+        X_cand[:, active] = rng.uniform(
+            bounds[active, 0],
+            bounds[active, 1],
+            size=(int(n_candidates), len(active)),
+        )
+        X_cand = np.clip(X_cand, bounds[:, 0], bounds[:, 1])
+
+    L_sigma = np.linalg.cholesky(Sigma + 1e-12 * np.eye(d))
+    standard_normals = rng.normal(size=(int(n_perturb), d))
+    perturbations = standard_normals @ L_sigma.T
+
+    values = np.array([
+        robust_lcb_penalty_on_J(
+            x,
+            gp,
+            Sigma,
+            bounds,
+            n_perturb=n_perturb,
+            kappa=kappa,
+            penalty_weight=penalty_weight,
             perturbations=perturbations,
         )
         for x in X_cand
