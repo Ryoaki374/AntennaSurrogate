@@ -203,10 +203,26 @@ def runSimulation():
                     "DeleteInvalidObjects:=", True
                 ])
 
+            yz_symmetry_face_id = int(
+                oEditor.GetFaceByPosition(
+                    [
+                        "NAME:FaceParameters",
+                        "BodyName:=",
+                        "Horn",
+                        "XPosition:=",
+                        "0mm",
+                        "YPosition:=",
+                        "1mm",
+                        "ZPosition:=",
+                        "1mm",
+                    ]
+                )
+            )
+            printlog("YZ symmetry boundary face_id resolved by position: {}".format(yz_symmetry_face_id))
             oBoundaryModule.AssignSymmetry(
                 [
                     "NAME:Sym1",
-                    "Faces:=", [2923, 2931],
+                    "Faces:=", [yz_symmetry_face_id],
                     "IsPerfectE:=", True
                 ])
             oBoundaryModule.AssignSymmetry(
