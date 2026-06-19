@@ -11,6 +11,7 @@ ScriptEnv.Initialize("Ansoft.ElectronicsDesktop")
 # --- Configuration & Global Constants ---
 LOG_PATH = r"T:\RAkizawa\HFSS_Horn\src\output_log.txt"
 CONFIG_PATH = r'T:\RAkizawa\HFSS_Horn\src\_config_HFSS.json'
+TOTAL_LENGTH_FILENAME = '.total_length'
 
 # --- parameter definition ---
 
@@ -65,6 +66,15 @@ except AttributeError:
 
 report_name = "S11_Export_Report"
 temp_export_path = os.path.join(WATCH_DIR, "temp_hfss_export.csv")
+
+
+def read_total_length_mm(total_length_path):
+    """Read the horn total length and return it as an HFSS millimeter value."""
+    with open(total_length_path, "r") as f:
+        value = f.read().strip()
+
+    float(value)
+    return "{}mm".format(value)
 
 #'''
 def runSimulation():
@@ -134,11 +144,30 @@ def runSimulation():
                 ])
 
             # boundary assignment
+            total_length_path = os.path.join(WATCH_DIR, TOTAL_LENGTH_FILENAME)
+            z_position = read_total_length_mm(total_length_path)
+            printlog("ZPosition loaded from {}: {}".format(total_length_path, z_position))
+            face_id = int(
+                oEditor.GetFaceByPosition(
+                    [
+                        "NAME:FaceParameters",
+                        "BodyName:=",
+                        "Horn",
+                        "XPosition:=",
+                        "0mm",
+                        "YPosition:=",
+                        "0mm",
+                        "ZPosition:=",
+                        z_position,
+                    ]
+                )
+            )
+            printlog("Radiation boundary face_id resolved from .total_length: {}".format(face_id))
             oBoundaryModule = oDesign.GetModule("BoundarySetup")
             oBoundaryModule.AssignRadiation(
                 [
                     "NAME:Rad1",
-                    "Faces:=", [16]
+                    "Faces:=", [face_id]
                 ])
 
             # split Horn into the positive YZ/ZX half model before assigning symmetry boundaries
