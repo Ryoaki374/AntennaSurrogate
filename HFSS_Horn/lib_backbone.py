@@ -116,6 +116,10 @@ class Backbone:
             decimals=decimals,
         )
 
+    def _write_total_length_file(self, total_length: float, value_fmt: str) -> None:
+        total_length_path = self._get_dir_run() / ".total_length"
+        total_length_path.write_text(f"{value_fmt.format(float(total_length))}\n", encoding="utf-8")
+
     def mkdir(self):
         if not hasattr(self, "dir_run"):
             timestamp = datetime.now().strftime("%m%d%H%M%S")
@@ -211,6 +215,7 @@ class Backbone:
             total_length=total_length,
             section_fracs=section_fracs,
         )
+        self._write_total_length_file(total_length, value_fmt)
 
         while True:
             if os.path.exists(temp_file) and os.path.getsize(temp_file) > 0:
