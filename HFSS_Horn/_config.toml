@@ -4,7 +4,19 @@
 [io]
     filename_input  = "params.csv"      # temporary csv file for setting HFSS params
     filename_output = "results.csv"     # csv file for storing results
-    filename_temp   = "temp_hfss_export.csv" # temporary csv file for passing results
+    filename_temp   = "temp_hfss_export.csv" # legacy temporary csv file for passing results
+
+    [[io.temp_outputs]]
+    name = "S11"
+    filename = "temp_S11_export.csv"
+
+    [[io.temp_outputs]]
+    name = "XPD"
+    filename = "temp_XPD_export.csv"
+
+    [[io.temp_outputs]]
+    name = "ellipticity"
+    filename = "temp_ellipticity_export.csv"
 
 # ------------------------------------------------------------  GP Hyperparams
 [opt]
@@ -26,6 +38,22 @@
     grad_db_backtrack_beta = 0.5    # shrink factor used when the Armijo condition fails
     grad_db_armijo_c = 1.0e-4       # sufficient-decrease condition for backtracking line search
     grad_db_min_step_ratio = 1.0e-3 # stop shrinking when the step gets too small
+
+# ------------------------------------------------------------  Objective
+[objective]
+    name = "Objective"
+
+    [[objective.terms]]
+    column = "S11"
+    weight = 1.0
+
+    [[objective.terms]]
+    column = "XPD"
+    weight = -0.2
+
+    [[objective.terms]]
+    column = "ellipticity"
+    weight = 0.1
 
 # ------------------------------------------------------------  HFSS simulation
 [hfss]

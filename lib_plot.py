@@ -10,7 +10,7 @@ import time
 plt.style.use('./graph_preset.mplstyle')
 
 
-def plot_learning_curve(df_output):
+def plot_learning_curve(df_output, objective_col="Objective"):
     fig, ax = plt.subplots(figsize=(10, 6), dpi=80)
     ax.plot(
         df_output.index,
@@ -22,7 +22,7 @@ def plot_learning_curve(df_output):
         label='learning curve'
     )
     ax.set_xlabel('Epoch')
-    ax.set_ylabel('Best Minimum Value Found (S11)', color='tab:blue')
+    ax.set_ylabel(f'Best Minimum Value Found ({objective_col})', color='tab:blue')
     ax.tick_params(axis='y', labelcolor='tab:blue')
 
     metric_col = "Metric" if "Metric" in df_output.columns else "Acq"
@@ -52,10 +52,11 @@ def fit_length_scale_and_visualize(
     kernel_type="RBF",
     bounds=(1e-2, 1e2),
     plot=True,
+    objective_col="Objective",
 ):
     # --- データ行列の構築（元コード準拠） ---
     X_sample = df_output[param_names].values
-    y_sample = df_output[["S11"]].values  # 形状 (n,1) を維持
+    y_sample = df_output[[objective_col]].values  # 形状 (n,1) を維持
 
     # --- length_scaleの最適化（元コード準拠） ---
     opt = minimize(
@@ -107,10 +108,11 @@ def plot_pdp_ice(
     figsize=(12, 10),
     dpi=80,
     show=True,
+    objective_col="Objective",
 ):
     
     X_sample = df_output[param_names].values
-    y_sample = df_output[["S11"]].values  # 形状 (n,1) を維持
+    y_sample = df_output[[objective_col]].values  # 形状 (n,1) を維持
     n_features = X_sample.shape[1]
     n_plots = min(n_features, nrows * ncols)
 
@@ -144,7 +146,7 @@ def plot_pdp_ice(
         ax_pdp.plot(dim_range, pdp_line, color='orange', lw=3, label='PDP (Average)')
 
         ax_pdp.set_xlabel(f'{param_names[i]}')
-        ax_pdp.set_ylabel('Partial Dependence (S11)')
+        ax_pdp.set_ylabel(f'Partial Dependence ({objective_col})')
         ax_pdp.set_title(f'PDP & ICE for {param_names[i]}')
         ax_pdp.grid(True, linestyle='--', alpha=0.6)
 
@@ -191,9 +193,10 @@ def plot_integrated_ei(
     figsize=(12, 10),
     dpi=80,
     show=True,
+    objective_col="Objective",
 ):
     X_sample = df_output[param_names].values
-    y_sample = df_output[["S11"]].values  # 形状 (n,1) を維持
+    y_sample = df_output[[objective_col]].values  # 形状 (n,1) を維持
 
     n_features = X_sample.shape[1]
     n_plots = min(n_features, nrows * ncols)
@@ -248,7 +251,7 @@ def plot_integrated_ei(
 
 def lcb_for_de_objective(X_sample, y_sample, vector, final_Ky_opt_inv, final_optimized_length_scale, KAPPA_DE = 2.0):
     #X_sample = df_output[param_names].values
-    #y_sample = df_output[["S11"]].values  # 形状 (n,1) を維持
+    #y_sample = df_output[[objective_col]].values  # 形状 (n,1) を維持
     mean, std_dev = gp.get_posterior(vector, X_sample, y_sample, final_Ky_opt_inv, final_optimized_length_scale)
     return mean - KAPPA_DE * std_dev
 
@@ -266,6 +269,7 @@ def differential_evolution_lcb(
     Ky_inv=None,
     length_scale=None,
     verbose=True,
+    objective_col="Objective",
 ):
     
     rng = np.random.default_rng(seed)
@@ -275,7 +279,7 @@ def differential_evolution_lcb(
     D = len(lower_bounds)
 
     X_sample = df_output[param_names].values
-    y_sample = df_output[["S11"]].values  # 形状 (n,1) を維持
+    y_sample = df_output[[objective_col]].values  # 形状 (n,1) を維持
 
     if verbose:
         print(f"Starting DE with {n_generations} generations "
@@ -330,7 +334,7 @@ def differential_evolution_lcb(
             print(f"  {name}: {val:.6f}")
         print("-" * 54)
         if post_mu is not None:
-            print(f"Predicted S11 at this point (μ): {post_mu:.6f}")
+            print(f"Predicted {objective_col} at this point (μ): {post_mu:.6f}")
             print(f"Prediction Uncertainty (σ): {post_std:.6f}")
             print(f"Pessimistic Estimate (LCB = μ - κ*σ): {best_lcb:.6f}")
         else:
@@ -348,4 +352,3 @@ def differential_evolution_lcb(
         "posterior_std": post_std,
         "best_lcb_value": best_lcb,
     }
-

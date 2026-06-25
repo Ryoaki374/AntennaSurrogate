@@ -291,9 +291,13 @@ class Backbone:
         return X[:nums]
 
 
-    def _genOutputDataFrame(self, df_current: pd.DataFrame,):
+    def _genOutputDataFrame(self, df_current: pd.DataFrame, objective_col: Optional[str] = None):
+        if objective_col is None:
+            objective_col = getattr(getattr(self.cfg, "objective", None), "name", "Objective")
+        if objective_col not in df_current and "S11" in df_current:
+            objective_col = "S11"
         df_output = df_current.copy()
-        df_output["best"] = df_output["S11"].cummin()
+        df_output["best"] = df_output[objective_col].cummin()
         return df_output
     
     def in_bounds(self, x, lb, ub):
@@ -306,6 +310,5 @@ class Backbone:
         print("\n" + "=" * 50)
         print(msg)
         print("=" * 50)
-
 
 
