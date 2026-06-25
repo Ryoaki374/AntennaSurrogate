@@ -39,6 +39,7 @@ try:
     INPUT_FILE = config['INPUT_FILE']
     MODEL_FILE = config['MODEL_FILE']
     RESULTS_FILE = config['RESULTS_FILE']
+    TEMP_OUTPUTS = config.get('TEMP_OUTPUTS', [])
     #PARAM_KEYS = config['param_names']
     #printlog("[Debug] {}, {}".format(config["n_repeats"], config["n_simulation"]))
 
@@ -66,6 +67,10 @@ except AttributeError:
 
 report_name = "S11_Export_Report"
 temp_export_path = os.path.join(WATCH_DIR, "temp_hfss_export.csv")
+for output in TEMP_OUTPUTS:
+    if output.get("name") == "S11":
+        temp_export_path = output.get("path", temp_export_path)
+        break
 
 
 def read_total_length_mm(total_length_path):

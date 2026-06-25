@@ -120,6 +120,12 @@ class Backbone:
         total_length_path = self._get_dir_run() / ".total_length"
         total_length_path.write_text(f"{value_fmt.format(float(total_length))}\n", encoding="utf-8")
 
+    def _get_temp_output_paths(self) -> List[Path]:
+        temp_outputs = getattr(self.cfg.io, "temp_outputs", [])
+        if temp_outputs:
+            return [self.dir_run / output.filename for output in temp_outputs]
+        return [self.dir_run / self.cfg.io.filename_temp]
+
     def mkdir(self):
         if not hasattr(self, "dir_run"):
             timestamp = datetime.now().strftime("%m%d%H%M%S")
@@ -169,7 +175,7 @@ class Backbone:
 
     def call_subroutine(self, config, index, param_names, param_values, value_fmt=None):
         model_paths, _ = self._get_path_models()
-        temp_file = str(self.dir_run / self.cfg.io.filename_temp)
+        temp_files = self._get_temp_output_paths()
 
         if len(model_paths) != 1:
             raise ValueError(f"Horn workflow expects exactly one model path, got {len(model_paths)}: {model_paths}")
@@ -218,7 +224,7 @@ class Backbone:
         self._write_total_length_file(total_length, value_fmt)
 
         while True:
-            if os.path.exists(temp_file) and os.path.getsize(temp_file) > 0:
+            if all(path.exists() and path.stat().st_size > 0 for path in temp_files):
                 time.sleep(0.5)
                 print("  > Result received from HFSS.")
                 return True
@@ -308,10 +314,13 @@ class Backbone:
         ub = np.asarray(upper_bounds, dtype=float)[list(active_indices)]
         return lb, ub
 
-    def _genOutputDataFrame(self, df: pd.DataFrame) -> pd.DataFrame:
-        if isinstance(df, pd.DataFrame):
-            return df.copy()
-        return pd.DataFrame(df)
+    def _genOutputDataFrame(self, df: pd.DataFrame, objective_col: Optional[str] = None) -> pd.DataFrame:
+        df_output = df.copy() if isinstance(df, pd.DataFrame) else pd.DataFrame(df)
+        if objective_col is None:
+            objective_col = getattr(getattr(self.cfg, "objective", None), "name", "Objective")
+        if objective_col in df_output:
+            df_output["best"] = df_output[objective_col].cummin()
+        return df_output
 
     def in_bounds(self, x, lb, ub):
         x = np.asarray(x, dtype=float)

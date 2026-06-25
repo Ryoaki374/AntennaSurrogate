@@ -21,10 +21,17 @@ RUNS_DIR: Path = BASE_DIR / "..."
 # ------------------------------ Configs ------------------------------
 
 @dataclasses.dataclass
+class TempOutputConfig:
+    name: str
+    filename: str
+
+
+@dataclasses.dataclass
 class IOConfig:
     filename_input: str
     filename_output: str
-    filename_temp: str
+    filename_temp: str | None = None
+    temp_outputs: List[TempOutputConfig] = dataclasses.field(default_factory=list)
 
 @dataclasses.dataclass
 class GaussianProcessConfig:
@@ -92,6 +99,18 @@ class RuntimeConfig:
     grad_db_min_step_ratio: float = 1e-3
 
 @dataclasses.dataclass
+class ObjectiveTermConfig:
+    column: str
+    weight: float
+
+
+@dataclasses.dataclass
+class ObjectiveConfig:
+    name: str = "Objective"
+    terms: List[ObjectiveTermConfig] = dataclasses.field(default_factory=list)
+
+
+@dataclasses.dataclass
 class AppConfig:
     io: IOConfig
     opt: GaussianProcessConfig
@@ -99,11 +118,18 @@ class AppConfig:
     test: SyntheticTestConfig
     env: Environment
     runtime: RuntimeConfig
+    objective: ObjectiveConfig
 
     @staticmethod
     def fromDict(config: dict) -> "AppConfig":
         io = config["io"]; opt=config["opt"]; hfss = config["hfss"]; test = config["test"]
         runtime = config.get("runtime", {})
+        objective = config.get("objective", {})
+
+        io = dict(io)
+        io["temp_outputs"] = [TempOutputConfig(**item) for item in io.get("temp_outputs", [])]
+        objective = dict(objective)
+        objective["terms"] = [ObjectiveTermConfig(**item) for item in objective.get("terms", [])]
 
         hfss = flatten_hfss_param_groups(hfss) # flatten param groups if they exist
 
@@ -119,6 +145,7 @@ class AppConfig:
             test = SyntheticTestConfig(**test),
             env = env,
             runtime = RuntimeConfig(**runtime),
+            objective = ObjectiveConfig(**objective),
         )
 
 # ------------------------------ App ------------------------------

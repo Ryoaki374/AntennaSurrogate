@@ -295,7 +295,7 @@ class GaussianProcess:
     def run_gp(self, X_sample, y_sample):
         train_X, train_Y = self._to_train_tensors(X_sample, y_sample)
 
-        # Minimize S11 -> maximize negative S11 inside BoTorch.
+        # Minimize the configured objective -> maximize its negative inside BoTorch.
         train_Y_model = -train_Y
 
         model = SingleTaskGP(
@@ -454,8 +454,10 @@ class GaussianProcess:
         n_restarts: int = 25,
         **kwargs,
     ) -> Tuple[np.ndarray, dict]:
+        default_objective_col = getattr(getattr(self.cfg, "objective", None), "name", "Objective")
+        objective_col = kwargs.get("objective_col", default_objective_col)
         X_sample = np.asarray([[row[name] for name in param_names] for row in history_data], dtype=float)
-        y_sample = np.asarray([[row["S11"]] for row in history_data], dtype=float)
+        y_sample = np.asarray([[row[objective_col]] for row in history_data], dtype=float)
 
         self.run_gp(X_sample, y_sample)
 
