@@ -66,6 +66,7 @@ class HFSSConfig:
     filename_models: List[str]
     param_groups: Dict[str, Dict[str, Any]]
     group_order: List[str] | None = None
+    n_pts: int = 80
 
 @dataclasses.dataclass
 class SyntheticTestConfig:

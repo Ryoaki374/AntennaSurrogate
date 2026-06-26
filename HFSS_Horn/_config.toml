@@ -68,6 +68,7 @@
     n_repeats = 1
     n_init = 20
     n_params = 7
+    n_pts = 80
     group_order = ["Horn"]
     filename_models = ["Horn.step"]
 
