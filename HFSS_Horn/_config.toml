@@ -42,18 +42,25 @@
 # ------------------------------------------------------------  Objective
 [objective]
     name = "Objective"
+    p = 2.0
 
     [[objective.terms]]
     column = "S11"
     weight = 1.0
+    target = -30.0
+    limit = -10.0
 
     [[objective.terms]]
     column = "XPD"
-    weight = -0.2
+    weight = 0.2
+    target = 30.0
+    limit = 10.0
 
     [[objective.terms]]
     column = "ellipticity"
     weight = 0.1
+    target = 0.0
+    limit = 3.0
 
 # ------------------------------------------------------------  HFSS simulation
 [hfss]

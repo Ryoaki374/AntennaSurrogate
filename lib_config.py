@@ -102,11 +102,14 @@ class RuntimeConfig:
 class ObjectiveTermConfig:
     column: str
     weight: float
+    target: float
+    limit: float
 
 
 @dataclasses.dataclass
 class ObjectiveConfig:
     name: str = "Objective"
+    p: float = 2.0
     terms: List[ObjectiveTermConfig] = dataclasses.field(default_factory=list)
 
 
