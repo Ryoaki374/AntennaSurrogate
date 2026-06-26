@@ -9,6 +9,8 @@ class RandomSearch:
         self.cfg = config
         runtime = getattr(config, "runtime", None)
         self.round_decimals = getattr(runtime, "round_decimals", 10)
+        objective = getattr(config, "objective", None)
+        self.objective_name = getattr(objective, "name", "Objective")
 
     def _round_vector(self, values) -> np.ndarray:
         return np.round(np.asarray(values, dtype=float), decimals=self.round_decimals)
@@ -69,7 +71,7 @@ class RandomSearch:
 
         y_new, row = objective_func(param_names, x_new)
         evaluated_row = dict(row)
-        evaluated_row["S11"] = float(np.round(y_new, self.round_decimals))
+        evaluated_row[self.objective_name] = float(np.round(y_new, self.round_decimals))
 
         return x_new, {
             "method": "random",
