@@ -12,14 +12,22 @@ ScriptEnv.Initialize("Ansoft.ElectronicsDesktop")
 LOG_PATH = r"T:\RAkizawa\HFSS_Horn\src\output_log.txt"
 CONFIG_PATH = r'T:\RAkizawa\HFSS_Horn\src\_config_HFSS.json'
 TOTAL_LENGTH_FILENAME = '.total_length'
+SCRIPT_START_TIME = time.time()
 
 # --- parameter definition ---
 
+def _elapsed_time_label():
+    """Return elapsed runtime as a [minutes:seconds] log prefix."""
+    elapsed_seconds = int(time.time() - SCRIPT_START_TIME)
+    minutes = elapsed_seconds // 60
+    seconds = elapsed_seconds % 60
+    return "[{}:{:02d}]".format(minutes, seconds)
+
 def printlog(message):
-    """Writes a simple message to the log file."""
+    """Writes a timestamped message to the log file."""
     try:
         with open(LOG_PATH, "a") as f:
-            f.write(str(message) + "\n")
+            f.write("{} {}\n".format(_elapsed_time_label(), str(message)))
     except Exception as e:
         with open(LOG_PATH, "a") as f:
             f.write("[ERROR][printlog] {}".format(str(e)))
