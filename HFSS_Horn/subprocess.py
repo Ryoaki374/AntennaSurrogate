@@ -217,17 +217,33 @@ def runSimulation():
                         "XPosition:=",
                         "0mm",
                         "YPosition:=",
-                        "1mm",
+                        "0.5mm",
                         "ZPosition:=",
                         "1mm",
                     ]
                 )
             )
-            printlog("YZ symmetry boundary face_id resolved by position: {}".format(yz_symmetry_face_id))
+            yz_symmetry_face_id_WG = int(
+                oEditor.GetFaceByPosition(
+                    [
+                        "NAME:FaceParameters",
+                        "BodyName:=",
+                        "WG",
+                        "XPosition:=",
+                        "0mm",
+                        "YPosition:=",
+                        "0.5mm",
+                        "ZPosition:=",
+                        "-1mm",
+                    ]
+                )
+            )
+            
+            printlog("YZ symmetry boundary face_id resolved by position: [{}, {}]".format(yz_symmetry_face_id, yz_symmetry_face_id_WG))
             oBoundaryModule.AssignSymmetry(
                 [
                     "NAME:Sym1",
-                    "Faces:=", [yz_symmetry_face_id],
+                    "Faces:=", [yz_symmetry_face_id, yz_symmetry_face_id_WG],
                     "IsPerfectE:=", True
                 ])
             zx_symmetry_face_id = int(
@@ -237,7 +253,7 @@ def runSimulation():
                         "BodyName:=",
                         "Horn",
                         "XPosition:=",
-                        "1mm",
+                        "0.5mm",
                         "YPosition:=",
                         "0mm",
                         "ZPosition:=",
@@ -245,11 +261,26 @@ def runSimulation():
                     ]
                 )
             )
+            zx_symmetry_face_id_WG = int(
+                oEditor.GetFaceByPosition(
+                    [
+                        "NAME:FaceParameters",
+                        "BodyName:=",
+                        "WG",
+                        "XPosition:=",
+                        "0.5mm",
+                        "YPosition:=",
+                        "0mm",
+                        "ZPosition:=",
+                        "-1mm",
+                    ]
+                )
+            )
             printlog("ZX symmetry boundary face_id resolved by position: {}".format(zx_symmetry_face_id))
             oBoundaryModule.AssignSymmetry(
                 [
                     "NAME:Sym2",
-                    "Faces:=", [zx_symmetry_face_id],
+                    "Faces:=", [zx_symmetry_face_id, zx_symmetry_face_id_WG],
                     "IsPerfectE:=", False
                 ])
 
@@ -327,6 +358,9 @@ def runSimulation():
                             "Selections:=", "Horn"
                         ])
                     printlog("[State] Successfully cleaned up Horn")
+                if oBoundaryModule:
+                    oBoundaryModule.DeleteAllBoundaries()
+                    
             except Exception as cleanup_e:
                 printlog("[ERROR] HFSS object cleanup: {}".format(cleanup_e))
 
