@@ -164,6 +164,54 @@ class ConvexHorn(Convex):
     and a straight section is tangent-continuous (smooth, convex S-shape).
     """
 
+    @staticmethod
+    def _horn_profile(d_aperture, d_middle, d_waveguide, total_length,
+                      section_fracs, n_pts):
+        """Build the closed (radius, height) profile shared by horn exporters."""
+        d_aperture = float(d_aperture)
+        d_middle = float(d_middle)
+        d_waveguide = float(d_waveguide)
+        total_length = float(total_length)
+        if any(v <= 0.0 for v in (d_aperture, d_middle, d_waveguide, total_length)):
+            raise ValueError("Horn diameters and total_length must be positive.")
+        if not (d_waveguide < d_middle < d_aperture):
+            raise ValueError("Horn diameters must satisfy d_waveguide < d_middle < d_aperture.")
+
+        fr = np.asarray(section_fracs, dtype=float)
+        if fr.size != 5 or np.any(fr <= 0):
+            raise ValueError("section_fracs must be 5 positive fractions.")
+        if not np.isclose(fr.sum(), 1.0, atol=1.0e-8):
+            raise ValueError("section_fracs must sum to 1.")
+
+        r_wg, r_mid, r_ap = d_waveguide/2.0, d_middle/2.0, d_aperture/2.0
+        L = total_length
+        zb = np.concatenate(([0.0], np.cumsum(fr))) * L
+
+        def s_taper(z0, z1, r1, r2):
+            """Sine-squared S-shaped taper from (z0, r1) to (z1, r2)."""
+            xi = np.linspace(0.0, 1.0, n_pts)
+            z = z0 + xi * (z1 - z0)
+            r = r1 + (r2 - r1) * np.sin(0.5*np.pi*xi)**2
+            return z, r
+
+        z_list = [0.0]
+        r_list = [r_wg]
+        z_list.append(zb[1]); r_list.append(r_wg)
+
+        z, r = s_taper(zb[1], zb[2], r_wg, r_mid)
+        z_list += list(z[1:]); r_list += list(r[1:])
+
+        z_list.append(zb[3]); r_list.append(r_mid)
+
+        z, r = s_taper(zb[3], zb[4], r_mid, r_ap)
+        z_list += list(z[1:]); r_list += list(r[1:])
+
+        z_list.append(L); r_list.append(r_ap)
+
+        r_closed = np.array([0.0] + r_list + [0.0])
+        z_closed = np.array([0.0] + z_list + [L])
+        return np.column_stack((r_closed, z_closed))
+
     def genHorn(self,
                 d_aperture=11.6,
                 d_middle=6.4,
@@ -198,52 +246,10 @@ class ConvexHorn(Convex):
         curve_pts : (N, 2) ndarray
             Closed (r, z) profile polyline, usable with plotProfile2D.
         """
-        d_aperture = float(d_aperture)
-        d_middle = float(d_middle)
-        d_waveguide = float(d_waveguide)
-        total_length = float(total_length)
-        if any(v <= 0.0 for v in (d_aperture, d_middle, d_waveguide, total_length)):
-            raise ValueError("Horn diameters and total_length must be positive.")
-        if not (d_waveguide < d_middle < d_aperture):
-            raise ValueError("Horn diameters must satisfy d_waveguide < d_middle < d_aperture.")
-
-        fr = np.asarray(section_fracs, dtype=float)
-        if fr.size != 5 or np.any(fr <= 0):
-            raise ValueError("section_fracs must be 5 positive fractions.")
-        if not np.isclose(fr.sum(), 1.0, atol=1.0e-8):
-            raise ValueError("section_fracs must sum to 1.")
-
-        r_wg, r_mid, r_ap = d_waveguide/2.0, d_middle/2.0, d_aperture/2.0
-        L = total_length
-        # section boundaries along z
-        zb = np.concatenate(([0.0], np.cumsum(fr))) * L
-
-        def s_taper(z0, z1, r1, r2):
-            """Sine-squared S-shaped taper from (z0, r1) to (z1, r2)."""
-            xi = np.linspace(0.0, 1.0, n_pts)
-            z = z0 + xi * (z1 - z0)
-            r = r1 + (r2 - r1) * np.sin(0.5*np.pi*xi)**2
-            return z, r
-
-        # assemble outer wall, bottom -> top
-        z_list = [0.0]
-        r_list = [r_wg]                       # 1. waveguide bottom edge
-        z_list.append(zb[1]); r_list.append(r_wg)
-
-        z, r = s_taper(zb[1], zb[2], r_wg, r_mid)   # 2. taper wg -> middle
-        z_list += list(z[1:]); r_list += list(r[1:])
-
-        z_list.append(zb[3]); r_list.append(r_mid)  # 3. middle straight
-
-        z, r = s_taper(zb[3], zb[4], r_mid, r_ap)   # 4. taper middle -> aperture
-        z_list += list(z[1:]); r_list += list(r[1:])
-
-        z_list.append(L); r_list.append(r_ap)       # 5. aperture straight
-
-        # close the profile along the rotation axis (r = 0)
-        r_closed = np.array([0.0] + r_list + [0.0])
-        z_closed = np.array([0.0] + z_list + [L])
-        curve_pts = np.column_stack((r_closed, z_closed))
+        curve_pts = self._horn_profile(
+            d_aperture, d_middle, d_waveguide, total_length,
+            section_fracs, n_pts,
+        )
 
         # revolve the closed profile around the global Z axis -> solid
         solid = (
@@ -254,6 +260,55 @@ class ConvexHorn(Convex):
         )
         exporters.export(solid, str(self.model_path))
 
+        return curve_pts
+
+    def genHornPoly(self,
+                    d_aperture=11.6,
+                    d_middle=6.4,
+                    d_waveguide=1.80,
+                    total_length=20.0,
+                    section_fracs=(0.18, 0.27, 0.21, 0.20, 0.14),
+                    n_pts_z=120,
+                    n_pts_c=None):
+        """Generate a horn with circular or regular-polygon cross-sections.
+
+        ``n_pts_z`` is the number of samples per S-taper.  If ``n_pts_c`` is
+        ``None``, the circular horn is generated exactly as by :meth:`genHorn`.
+        An integer ``n_pts_c >= 3`` instead approximates every circular cross-
+        section by a regular polygon with that many vertices.
+        """
+        if n_pts_c is None:
+            return self.genHorn(
+                d_aperture=d_aperture,
+                d_middle=d_middle,
+                d_waveguide=d_waveguide,
+                total_length=total_length,
+                section_fracs=section_fracs,
+                n_pts=n_pts_z,
+            )
+        if (isinstance(n_pts_c, bool)
+                or not isinstance(n_pts_c, (int, np.integer))
+                or n_pts_c < 3):
+            raise ValueError("n_pts_c must be None or an integer greater than or equal to 3.")
+
+        curve_pts = self._horn_profile(
+            d_aperture, d_middle, d_waveguide, total_length,
+            section_fracs, n_pts_z,
+        )
+
+        # Exclude the two rotation-axis closing points: each remaining profile
+        # point defines one regular-polygon wire in its XY cross-section.
+        theta = np.linspace(0.0, 2.0*np.pi, int(n_pts_c), endpoint=False)
+        wires = []
+        for radius, z in curve_pts[1:-1]:
+            vertices = [
+                cq.Vector(radius*np.cos(t), radius*np.sin(t), z)
+                for t in theta
+            ]
+            wires.append(cq.Wire.makePolygon(vertices, close=True))
+
+        solid = cq.Solid.makeLoft(wires, True)
+        exporters.export(solid, str(self.model_path))
         return curve_pts
 
     def plotHorn3D(self, curve_pts, n_theta=72, step=1):
@@ -326,6 +381,80 @@ class ConvexHorn(Convex):
         ax.set_ylabel('Y')
         ax.set_zlabel('Z')
 
+        ax.set_aspect('equal')
+
+        plt.show()
+
+    def plotHornPoly3D(self, curve_pts, n_pts_c, step=1):
+        """Visualize the regular-polygon horn exported by ``genHornPoly``.
+
+        Parameters
+        ----------
+        curve_pts : (N, 2) array
+            Closed (r, z) profile polyline returned by ``genHornPoly``.
+        n_pts_c : int
+            Number of vertices in each regular-polygon cross-section (>=3).
+        step : int
+            Profile decimation step for plotting (>=1).
+        """
+        if (isinstance(n_pts_c, bool)
+                or not isinstance(n_pts_c, (int, np.integer))
+                or n_pts_c < 3):
+            raise ValueError("n_pts_c must be an integer greater than or equal to 3.")
+        if isinstance(step, bool) or not isinstance(step, (int, np.integer)) or step < 1:
+            raise ValueError("step must be an integer greater than or equal to 1.")
+
+        # The first and last points lie on the rotation axis and are not part
+        # of the polygon wires constructed by genHornPoly.
+        pts2d = np.asarray(curve_pts, dtype=float)[1:-1]
+        if step > 1:
+            keep = np.zeros(len(pts2d), dtype=bool)
+            keep[::step] = True
+            keep[-1] = True
+            pts2d = pts2d[keep]
+
+        theta = np.linspace(0.0, 2.0*np.pi, int(n_pts_c) + 1)
+        R = pts2d[:, 0][:, None]
+        X = R * np.cos(theta)[None, :]
+        Y = R * np.sin(theta)[None, :]
+        Z = np.repeat(pts2d[:, 1][:, None], int(n_pts_c) + 1, axis=1)
+
+        fig = plt.figure(figsize=(10, 7))
+        ax = fig.add_subplot(111, projection='3d')
+
+        ax.xaxis.pane.set_edgecolor('k')
+        ax.yaxis.pane.set_edgecolor('k')
+        ax.zaxis.pane.set_edgecolor('k')
+        ax.xaxis.pane.set_facecolor("w")
+        ax.yaxis.pane.set_facecolor("w")
+        ax.zaxis.pane.set_facecolor("w")
+
+        ax.grid(False)
+        ax.view_init(azim=50, elev=30)
+
+        ax.scatter(X[::6, :-1].ravel(), Y[::6, :-1].ravel(),
+                   Z[::6, :-1].ravel(), color='k', s=10, alpha=0.5)
+
+        faces = []
+        for i in range(X.shape[0] - 1):
+            for j in range(int(n_pts_c)):
+                faces.append([(X[i, j],   Y[i, j],   Z[i, j]),
+                              (X[i+1, j], Y[i+1, j], Z[i+1, j]),
+                              (X[i+1, j+1], Y[i+1, j+1], Z[i+1, j+1]),
+                              (X[i, j+1], Y[i, j+1], Z[i, j+1])])
+
+        # Match the closed loft exported by genHornPoly.
+        faces.append([(X[0, j], Y[0, j], Z[0, j]) for j in range(int(n_pts_c))])
+        faces.append([(X[-1, j], Y[-1, j], Z[-1, j])
+                      for j in range(int(n_pts_c))])
+
+        poly = Poly3DCollection(faces, alpha=0.3, facecolors='gray',
+                                edgecolors='k', linewidths=0.1)
+        ax.add_collection3d(poly)
+
+        ax.set_xlabel('X')
+        ax.set_ylabel('Y')
+        ax.set_zlabel('Z')
         ax.set_aspect('equal')
 
         plt.show()
