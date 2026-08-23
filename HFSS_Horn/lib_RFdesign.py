@@ -384,3 +384,77 @@ class ConvexHorn(Convex):
         ax.set_aspect('equal')
 
         plt.show()
+
+    def plotHornPoly3D(self, curve_pts, n_pts_c, step=1):
+        """Visualize the regular-polygon horn exported by ``genHornPoly``.
+
+        Parameters
+        ----------
+        curve_pts : (N, 2) array
+            Closed (r, z) profile polyline returned by ``genHornPoly``.
+        n_pts_c : int
+            Number of vertices in each regular-polygon cross-section (>=3).
+        step : int
+            Profile decimation step for plotting (>=1).
+        """
+        if (isinstance(n_pts_c, bool)
+                or not isinstance(n_pts_c, (int, np.integer))
+                or n_pts_c < 3):
+            raise ValueError("n_pts_c must be an integer greater than or equal to 3.")
+        if isinstance(step, bool) or not isinstance(step, (int, np.integer)) or step < 1:
+            raise ValueError("step must be an integer greater than or equal to 1.")
+
+        # The first and last points lie on the rotation axis and are not part
+        # of the polygon wires constructed by genHornPoly.
+        pts2d = np.asarray(curve_pts, dtype=float)[1:-1]
+        if step > 1:
+            keep = np.zeros(len(pts2d), dtype=bool)
+            keep[::step] = True
+            keep[-1] = True
+            pts2d = pts2d[keep]
+
+        theta = np.linspace(0.0, 2.0*np.pi, int(n_pts_c) + 1)
+        R = pts2d[:, 0][:, None]
+        X = R * np.cos(theta)[None, :]
+        Y = R * np.sin(theta)[None, :]
+        Z = np.repeat(pts2d[:, 1][:, None], int(n_pts_c) + 1, axis=1)
+
+        fig = plt.figure(figsize=(10, 7))
+        ax = fig.add_subplot(111, projection='3d')
+
+        ax.xaxis.pane.set_edgecolor('k')
+        ax.yaxis.pane.set_edgecolor('k')
+        ax.zaxis.pane.set_edgecolor('k')
+        ax.xaxis.pane.set_facecolor("w")
+        ax.yaxis.pane.set_facecolor("w")
+        ax.zaxis.pane.set_facecolor("w")
+
+        ax.grid(False)
+        ax.view_init(azim=50, elev=30)
+
+        ax.scatter(X[::6, :-1].ravel(), Y[::6, :-1].ravel(),
+                   Z[::6, :-1].ravel(), color='k', s=10, alpha=0.5)
+
+        faces = []
+        for i in range(X.shape[0] - 1):
+            for j in range(int(n_pts_c)):
+                faces.append([(X[i, j],   Y[i, j],   Z[i, j]),
+                              (X[i+1, j], Y[i+1, j], Z[i+1, j]),
+                              (X[i+1, j+1], Y[i+1, j+1], Z[i+1, j+1]),
+                              (X[i, j+1], Y[i, j+1], Z[i, j+1])])
+
+        # Match the closed loft exported by genHornPoly.
+        faces.append([(X[0, j], Y[0, j], Z[0, j]) for j in range(int(n_pts_c))])
+        faces.append([(X[-1, j], Y[-1, j], Z[-1, j])
+                      for j in range(int(n_pts_c))])
+
+        poly = Poly3DCollection(faces, alpha=0.3, facecolors='gray',
+                                edgecolors='k', linewidths=0.1)
+        ax.add_collection3d(poly)
+
+        ax.set_xlabel('X')
+        ax.set_ylabel('Y')
+        ax.set_zlabel('Z')
+        ax.set_aspect('equal')
+
+        plt.show()
