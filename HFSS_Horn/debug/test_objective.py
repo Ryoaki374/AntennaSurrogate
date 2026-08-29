@@ -1,4 +1,5 @@
 import sys
+import tomllib
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -35,3 +36,14 @@ def test_calculate_lp_fom_rejects_missing_outputs():
 def test_calculate_lp_fom_accepts_an_explicit_p_override():
     config = {"terms": [{"column": "S11", "weight": 1.0, "target": -20, "limit": -10}]}
     assert calculate_lp_fom({"S11": -15.0}, config, p=2.0) == pytest.approx(0.5)
+
+
+def test_active_hfss_outputs_match_objective_terms():
+    config_path = Path(__file__).resolve().parents[1] / "_config.toml"
+    with config_path.open("rb") as config_file:
+        config = tomllib.load(config_file)
+
+    output_names = [output["name"] for output in config["io"]["temp_outputs"]]
+    objective_columns = [term["column"] for term in config["objective"]["terms"]]
+    assert output_names == ["S11", "XPD"]
+    assert objective_columns == output_names

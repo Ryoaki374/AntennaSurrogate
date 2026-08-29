@@ -105,14 +105,16 @@ REPORT_SPECS = [
         "families": ["Freq:=", ["All"]],
         "y_component": "dB20(MaxrELudwig3YComp/MaxrELudwig3XComp)",
     },
-    {
-        "output_name": "ellipticity",
-        "report_name": "Ellipticity_Export_Report",
-        "category": "Antenna Parameters",
-        "context": ["Context:=", "Infinite Sphere1"],
-        "families": ["Freq:=", ["All"]],
-        "y_component": "dB(AxialRatioValue)",
-    },
+    # Ellipticity export is temporarily disabled until the report definition
+    # is validated in HFSS.
+    # {
+    #     "output_name": "ellipticity",
+    #     "report_name": "Ellipticity_Export_Report",
+    #     "category": "Antenna Parameters",
+    #     "context": ["Context:=", "Infinite Sphere1"],
+    #     "families": ["Freq:=", ["All"]],
+    #     "y_component": "dB(AxialRatioValue)",
+    # },
 ]
 
 
