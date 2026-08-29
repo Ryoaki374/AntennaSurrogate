@@ -73,12 +73,77 @@ except AttributeError:
     printlog("[ERROR][HFSS_init] Could not get active Project or Design.")
     exit()
 
-report_name = "S11_Export_Report"
-temp_export_path = os.path.join(WATCH_DIR, "temp_hfss_export.csv")
+temp_output_paths = {}
 for output in TEMP_OUTPUTS:
-    if output.get("name") == "S11":
-        temp_export_path = output.get("path", temp_export_path)
-        break
+    if output.get("name") and output.get("path"):
+        temp_output_paths[output["name"]] = output["path"]
+
+temp_output_paths.setdefault("S11", os.path.join(WATCH_DIR, "temp_hfss_export.csv"))
+
+REPORT_SPECS = [
+    {
+        "output_name": "S11",
+        "report_name": "S11_Export_Report",
+        "category": "Modal Solution Data",
+        "context": ["Domain:=", "Sweep"],
+        "families": [
+            "Freq:=", ["All"],
+            "a:=", ["Nominal"],
+            "b:=", ["Nominal"],
+            "CenterFreq:=", ["Nominal"],
+            "CoaxOuterDiameter:=", ["Nominal"],
+            "CoaxLength:=", ["Nominal"],
+            "CoaxInnerDiameter:=", ["Nominal"],
+        ],
+        "y_component": "db(mean(mag(S(Port1,Port1))))",
+    },
+    {
+        "output_name": "XPD",
+        "report_name": "XPD_Export_Report",
+        "category": "Antenna Parameters",
+        "context": ["Context:=", "Infinite Sphere1"],
+        "families": ["Freq:=", ["All"]],
+        "y_component": "dB20(MaxrELudwig3YComp/MaxrELudwig3XComp)",
+    },
+    # Ellipticity export is temporarily disabled until the report definition
+    # is validated in HFSS.
+    # {
+    #     "output_name": "ellipticity",
+    #     "report_name": "Ellipticity_Export_Report",
+    #     "category": "Antenna Parameters",
+    #     "context": ["Context:=", "Infinite Sphere1"],
+    #     "families": ["Freq:=", ["All"]],
+    #     "y_component": "dB(AxialRatioValue)",
+    # },
+]
+
+
+def export_reports():
+    """Create and export each configured scalar-output report."""
+    existing_reports = oReportModule.GetAllReportNames()
+    for report in REPORT_SPECS:
+        output_path = temp_output_paths.get(report["output_name"])
+        if not output_path:
+            printlog("[State] Skipping unconfigured output: {}".format(report["output_name"]))
+            continue
+
+        report_name = report["report_name"]
+        if report_name in existing_reports:
+            printlog("[State] Deleting existing report: {}".format(report_name))
+            oReportModule.DeleteReports([report_name])
+
+        printlog("[State] Creating report: {}".format(report_name))
+        oReportModule.CreateReport(
+            report_name,
+            report["category"],
+            "Rectangular Plot",
+            "Setup1 : Sweep",
+            report["context"],
+            report["families"],
+            ["X Component:=", "Freq", "Y Component:=", [report["y_component"]]],
+        )
+        printlog("[State] Exporting {} to: {}".format(report_name, output_path))
+        oReportModule.ExportToFile(report_name, output_path, False)
 
 
 def read_total_length_mm(total_length_path):
@@ -91,6 +156,7 @@ def read_total_length_mm(total_length_path):
 
 #'''
 def runSimulation():
+    oRadFieldModule = None
     try:
             # model import
             printlog("[State] Importing step file from: {}".format(MODEL_FILE))
@@ -292,6 +358,25 @@ def runSimulation():
                     "IsPerfectE:=", False
                 ])
 
+            oRadFieldModule = oDesign.GetModule("RadField")
+            if "Infinite Sphere1" in oRadFieldModule.GetChildNames():
+                printlog("[State] Deleting existing far-field setup: Infinite Sphere1")
+                oRadFieldModule.DeleteSetup(["Infinite Sphere1"])
+            oRadFieldModule.InsertInfiniteSphereSetup(
+                [
+                    "NAME:Infinite Sphere1",
+                    "UseCustomRadiationSurface:=", False,
+                    "CSDefinition:=", "Theta-Phi",
+                    "Polarization:=", "Linear",
+                    "ThetaStart:=", "-30deg",
+                    "ThetaStop:=", "30deg",
+                    "ThetaStep:=", "0.1deg",
+                    "PhiStart:=", "0deg",
+                    "PhiStop:=", "90deg",
+                    "PhiStep:=", "1deg",
+                    "UseLocalCS:=", False,
+                ])
+
             oProject.Save()
 
             # remove imported models
@@ -318,31 +403,7 @@ def runSimulation():
             # setup
             oReportModule = oDesign.GetModule("ReportSetup")
 
-            if report_name in oReportModule.GetAllReportNames():
-                printlog("[State] Deleting existing report: {}".format(report_name))
-                oReportModule.DeleteReports([report_name])
-
-            printlog("[State] Creating report: {}".format(report_name))
-            oReportModule.CreateReport(report_name, "Modal Solution Data", "Rectangular Plot", "Setup1 : Sweep",
-                [
-                    "Domain:=", "Sweep"
-                ],
-                [
-                    "Freq:=", ["All"],
-                    "a:=", ["Nominal"],
-                    "b:=", ["Nominal"],
-                    "CenterFreq:=", ["Nominal"],
-                    "CoaxOuterDiameter:=", ["Nominal"],
-                    "CoaxLength:=", ["Nominal"],
-                    "CoaxInnerDiameter:=", ["Nominal"]
-                ],
-                [
-                    "X Component:=", "Freq",
-                    "Y Component:=", ["db(mean(mag(S(Port1,Port1))))"]
-                ])
-
-            printlog("[State] Exporting report to temporary file: {}".format(temp_export_path))
-            oReportModule.ExportToFile(report_name, temp_export_path, False)
+            export_reports()
 
     except Exception as e:
         printlog("[ERROR] HFSS simulation: {}".format(e))
@@ -353,8 +414,16 @@ def runSimulation():
             try:
                 if oDesign:
 
-                    if report_name in oReportModule.GetAllReportNames():
-                        oReportModule.DeleteReports([report_name])
+                    existing_reports = oReportModule.GetAllReportNames()
+                    reports_to_delete = [
+                        report["report_name"] for report in REPORT_SPECS
+                        if report["report_name"] in existing_reports
+                    ]
+                    if reports_to_delete:
+                        oReportModule.DeleteReports(reports_to_delete)
+
+                    if oRadFieldModule:
+                        oRadFieldModule.DeleteSetup(["Infinite Sphere1"])
 
                     oDesign.DeleteFullVariation("All", False)
 
