@@ -52,9 +52,9 @@
 
     [[objective.terms]]
     column = "XPD"
-    weight = 0.2
-    target = 30.0
-    limit = 10.0
+    weight = 1.0
+    target = -20.0
+    limit = -5.0
 
     [[objective.terms]]
     column = "ellipticity"
