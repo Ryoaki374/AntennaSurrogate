@@ -20,10 +20,12 @@ def normalize_objective(value, target, limit):
     return max(0.0, (value - target) / (limit - target))
 
 
-def calculate_lp_fom(values, objective_config):
+def calculate_lp_fom(values, objective_config, p=None):
     """Return one weighted Lp objective from the configured scalar outputs."""
     terms = _get_field(objective_config, "terms")
-    p = float(_get_field(objective_config, "p"))
+    if p is None:
+        p = _get_field(objective_config, "p")
+    p = float(p)
     if not math.isfinite(p) or p < 1.0:
         raise ValueError("objective p must be finite and at least one")
 

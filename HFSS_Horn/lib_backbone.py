@@ -215,13 +215,14 @@ class Backbone:
         total_length = float(horn_group.get("l_tot", horn_group.get("total_length")))
         n_pts = int(getattr(self.cfg.hfss, "n_pts", 80))
 
-        design.genHorn(
+        design.genHornPoly(
             d_aperture=FIXED_D_APERTURE,
             d_middle=d_middle,
             d_waveguide=FIXED_D_WAVEGUIDE,
             total_length=total_length,
             section_fracs=section_fracs,
-            n_pts=n_pts,
+            n_pts_z=n_pts,
+            n_pts_c=24,
         )
         self._write_total_length_file(total_length, value_fmt)
 

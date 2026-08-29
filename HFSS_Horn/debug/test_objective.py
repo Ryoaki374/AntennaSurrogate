@@ -30,3 +30,8 @@ def test_calculate_lp_fom_rejects_missing_outputs():
     config = {"p": 2.0, "terms": [{"column": "S11", "weight": 1.0, "target": -30, "limit": -10}]}
     with pytest.raises(ValueError, match="differ"):
         calculate_lp_fom({"XPD": -20.0}, config)
+
+
+def test_calculate_lp_fom_accepts_an_explicit_p_override():
+    config = {"terms": [{"column": "S11", "weight": 1.0, "target": -20, "limit": -10}]}
+    assert calculate_lp_fom({"S11": -15.0}, config, p=2.0) == pytest.approx(0.5)
