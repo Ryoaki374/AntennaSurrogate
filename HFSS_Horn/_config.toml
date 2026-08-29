@@ -14,10 +14,6 @@
     name = "XPD"
     filename = "temp_XPD_export.csv"
 
-    [[io.temp_outputs]]
-    name = "ellipticity"
-    filename = "temp_ellipticity_export.csv"
-
 # ------------------------------------------------------------  GP Hyperparams
 [opt]
     kernel_type     = "Matern52" # kernel name: RBF or Matern52
