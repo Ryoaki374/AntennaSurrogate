@@ -14,10 +14,6 @@
     name = "XPD"
     filename = "temp_XPD_export.csv"
 
-    [[io.temp_outputs]]
-    name = "ellipticity"
-    filename = "temp_ellipticity_export.csv"
-
 # ------------------------------------------------------------  GP Hyperparams
 [opt]
     kernel_type     = "Matern52" # kernel name: RBF or Matern52
@@ -53,14 +49,8 @@
     [[objective.terms]]
     column = "XPD"
     weight = 0.2
-    target = 30.0
-    limit = 10.0
-
-    [[objective.terms]]
-    column = "ellipticity"
-    weight = 0.1
-    target = 0.0
-    limit = 3.0
+    target = -30.0
+    limit = -10.0
 
 # ------------------------------------------------------------  HFSS simulation
 [hfss]
