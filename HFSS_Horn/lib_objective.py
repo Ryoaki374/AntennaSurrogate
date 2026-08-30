@@ -1,5 +1,35 @@
+import csv
 import math
 from collections.abc import Mapping
+
+
+def read_temp_output(csv_path, output_name):
+    """Reduce an HFSS CSV export to the scalar used by the optimizer.
+
+    Scalar reports (currently S11 and XPD) use the mean of their last data
+    column.  The ellipticity report contains frequency followed by the Phi=0
+    and Phi=90 half-power beam widths; its per-frequency ellipticity is
+    (Phi90 - Phi0) / (Phi90 + Phi0).
+    """
+    with open(csv_path, newline="", encoding="utf-8-sig") as csv_file:
+        rows = list(csv.reader(csv_file))
+    if len(rows) < 2:
+        raise ValueError("HFSS output CSV must contain a header and at least one data row")
+
+    if output_name != "ellipticity":
+        values = [float(row[-1]) for row in rows[1:]]
+        return sum(values) / len(values)
+
+    if len(rows[0]) < 3:
+        raise ValueError("ellipticity CSV must contain frequency, Phi=0, and Phi=90 columns")
+    ellipticities = []
+    for row in rows[1:]:
+        phi_0, phi_90 = float(row[1]), float(row[2])
+        denominator = phi_90 + phi_0
+        if denominator == 0:
+            raise ValueError("ellipticity is undefined when Phi=0 and Phi=90 widths sum to zero")
+        ellipticities.append((phi_90 - phi_0) / denominator)
+    return sum(ellipticities) / len(ellipticities)
 
 
 def _get_field(value, name):

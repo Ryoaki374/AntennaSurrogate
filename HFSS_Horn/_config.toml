@@ -14,10 +14,9 @@
     name = "XPD"
     filename = "temp_XPD_export.csv"
 
-    # Ellipticity is temporarily disabled until its HFSS report is validated.
-    # [[io.temp_outputs]]
-    # name = "ellipticity"
-    # filename = "temp_ellipticity_export.csv"
+    [[io.temp_outputs]]
+    name = "ellipticity"
+    filename = "temp_ellipticity_export.csv"
 
 # ------------------------------------------------------------  GP Hyperparams
 [opt]
@@ -57,11 +56,11 @@
     target = -20.0
     limit = -5.0
 
-    # [[objective.terms]]
-    # column = "ellipticity"
-    # weight = 0.1
-    # target = 0.0
-    # limit = 3.0
+    [[objective.terms]]
+    column = "ellipticity"
+    weight = 0.1
+    target = 0.0
+    limit = 3.0
 
 # ------------------------------------------------------------  HFSS simulation
 [hfss]
