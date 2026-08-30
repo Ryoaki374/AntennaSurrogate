@@ -14,9 +14,10 @@
     name = "XPD"
     filename = "temp_XPD_export.csv"
 
-    [[io.temp_outputs]]
-    name = "ellipticity"
-    filename = "temp_ellipticity_export.csv"
+    # Ellipticity is temporarily disabled until its HFSS report is validated.
+    # [[io.temp_outputs]]
+    # name = "ellipticity"
+    # filename = "temp_ellipticity_export.csv"
 
 # ------------------------------------------------------------  GP Hyperparams
 [opt]
@@ -52,15 +53,15 @@
 
     [[objective.terms]]
     column = "XPD"
-    weight = 0.2
-    target = 30.0
-    limit = 10.0
+    weight = 1.0
+    target = -20.0
+    limit = -5.0
 
-    [[objective.terms]]
-    column = "ellipticity"
-    weight = 0.1
-    target = 0.0
-    limit = 3.0
+    # [[objective.terms]]
+    # column = "ellipticity"
+    # weight = 0.1
+    # target = 0.0
+    # limit = 3.0
 
 # ------------------------------------------------------------  HFSS simulation
 [hfss]
@@ -79,7 +80,7 @@
     # inside the strict d_waveguide < d_m < d_aperture geometry requirement.
     param_names  = ["d_m", "l_tot", "f_wg", "f_t1", "f_mid", "f_t2", "f_ap"]
     param_units  = ["mm", "mm", "", "", "", "", ""]
-    lower_bounds = [1.800001, 1.0, 0.05, 0.05, 0.05, 0.05, 0.05]
+    lower_bounds = [2.4, 1.0, 0.05, 0.05, 0.05, 0.05, 0.05]
     upper_bounds = [11.599999, 50.0, 0.999996, 0.999996, 0.999996, 0.999996, 0.999996]
     baseline     = [6.4, 20.0, 0.18, 0.27, 0.21, 0.20, 0.14]
     vary         = true
