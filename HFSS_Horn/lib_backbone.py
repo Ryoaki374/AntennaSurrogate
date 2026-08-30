@@ -18,7 +18,7 @@ SECTION_FRAC_SLICE = slice(2, 7)
 SECTION_FRAC_NAMES = ("f_wg", "f_t1", "f_mid", "f_t2", "f_ap")
 SECTION_FRAC_ATOL = 1.0e-8
 FIXED_D_APERTURE = 11.6
-FIXED_D_WAVEGUIDE = 1.8
+FIXED_D_WAVEGUIDE = 2.30
 
 
 def section_frac_sum_constraint(x):
