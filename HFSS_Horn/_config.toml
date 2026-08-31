@@ -18,6 +18,10 @@
     name = "ellipticity"
     filename = "temp_ellipticity_export.csv"
 
+    [[io.temp_outputs]]
+    name = "phase_center"
+    filename = "temp_phase_center_export.csv"
+
 # ------------------------------------------------------------  GP Hyperparams
 [opt]
     kernel_type     = "Matern52" # kernel name: RBF or Matern52
@@ -61,6 +65,12 @@
     weight = 0.1
     target = 0.0
     limit = 3.0
+
+    [[objective.terms]]
+    column = "phase_center"
+    weight = 1.0
+    target = 0.0
+    limit = 5.0
 
 # ------------------------------------------------------------  HFSS simulation
 [hfss]
