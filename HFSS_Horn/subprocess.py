@@ -80,6 +80,12 @@ for output in TEMP_OUTPUTS:
 
 temp_output_paths.setdefault("S11", os.path.join(WATCH_DIR, "temp_hfss_export.csv"))
 
+
+def phase_center_imag_path(real_path):
+    """Return the private imaginary-field export paired with a real-field CSV."""
+    root, extension = os.path.splitext(real_path)
+    return root + "_imag" + extension
+
 REPORT_SPECS = [
     {
         "output_name": "S11",
@@ -119,6 +125,54 @@ REPORT_SPECS = [
     },
 ]
 
+PHASE_CENTER_REPORTS = [
+    {
+        "report_name": "rE Table 1",
+        "y_component": "re(rETheta)",
+        "part": "real",
+    },
+    {
+        "report_name": "rE Table 2",
+        "y_component": "im(rETheta)",
+        "part": "imag",
+    },
+]
+
+
+def export_phase_center_reports(existing_reports):
+    """Export E-plane real/imaginary rETheta tables for phase-center fitting.
+
+    The imaginary file is exported first and the configured real file last, so
+    the latter also serves as the ready signal consumed by the Python driver.
+    """
+    real_path = temp_output_paths.get("phase_center")
+    if not real_path:
+        printlog("[State] Skipping unconfigured output: phase_center")
+        return
+
+    paths = {
+        "real": real_path,
+        "imag": phase_center_imag_path(real_path),
+    }
+    for report in PHASE_CENTER_REPORTS:
+        if report["report_name"] in existing_reports:
+            oReportModule.DeleteReports([report["report_name"]])
+        oReportModule.CreateReport(
+            report["report_name"],
+            "Far Fields",
+            "Data Table",
+            "Setup1 : Sweep",
+            ["Context:=", "Infinite Sphere1"],
+            ["Theta:=", ["All"], "Phi:=", ["0deg"], "Freq:=", ["All"]],
+            ["X Component:=", "Theta", "Y Component:=", [report["y_component"]]],
+        )
+
+    # Publish the configured (real) path only after its imaginary companion.
+    for part in ("imag", "real"):
+        report = next(item for item in PHASE_CENTER_REPORTS if item["part"] == part)
+        printlog("[State] Exporting {} to: {}".format(report["report_name"], paths[part]))
+        oReportModule.ExportToFile(report["report_name"], paths[part], False)
+
 
 def export_reports():
     """Create and export each configured scalar-output report."""
@@ -146,6 +200,8 @@ def export_reports():
         )
         printlog("[State] Exporting {} to: {}".format(report_name, output_path))
         oReportModule.ExportToFile(report_name, output_path, False)
+
+    export_phase_center_reports(existing_reports)
 
 
 def read_total_length_mm(total_length_path):
@@ -421,6 +477,10 @@ def runSimulation():
                         report["report_name"] for report in REPORT_SPECS
                         if report["report_name"] in existing_reports
                     ]
+                    reports_to_delete.extend(
+                        report["report_name"] for report in PHASE_CENTER_REPORTS
+                        if report["report_name"] in existing_reports
+                    )
                     if reports_to_delete:
                         oReportModule.DeleteReports(reports_to_delete)
 
