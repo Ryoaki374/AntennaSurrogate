@@ -271,19 +271,13 @@ for output_name in sorted(temp_output_paths):
 REPORT_SPECS = [
     {
         "output_name": "S11",
-        "report_name": "S11_Export_Report",
+        "report_name": "S Parameter Plot 3",
         "category": "Modal Solution Data",
         "context": ["Domain:=", "Sweep"],
         "families": [
             "Freq:=", ["All"],
-            "a:=", ["Nominal"],
-            "b:=", ["Nominal"],
-            "CenterFreq:=", ["Nominal"],
-            "CoaxOuterDiameter:=", ["Nominal"],
-            "CoaxLength:=", ["Nominal"],
-            "CoaxInnerDiameter:=", ["Nominal"],
         ],
-        "y_component": "db(mean(mag(S(Port1,Port1))))",
+        "y_component": "dB(S(Port1:1,Port1:1))",
     },
     {
         "output_name": "ellipticity",
