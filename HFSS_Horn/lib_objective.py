@@ -6,15 +6,22 @@ from collections.abc import Mapping
 def read_temp_output(csv_path, output_name):
     """Reduce an HFSS CSV export to the scalar used by the optimizer.
 
-    Scalar reports (currently S11 and XPD) use the mean of their last data
+    Scalar reports (currently S11 and Crosspol) use the mean of their last data
     column.  The ellipticity report contains frequency followed by the Phi=0
     and Phi=90 half-power beam widths; its per-frequency ellipticity is
-    (Phi90 - Phi0) / (Phi90 + Phi0).
+    (Phi90 - Phi0) / (Phi90 + Phi0).  The phase-center report contains the
+    best z at each frequency and reduces to the population standard deviation
+    of z over frequency.
     """
     with open(csv_path, newline="", encoding="utf-8-sig") as csv_file:
         rows = list(csv.reader(csv_file))
     if len(rows) < 2:
         raise ValueError("HFSS output CSV must contain a header and at least one data row")
+
+    if output_name == "phasecenter":
+        z_values = [float(row[1]) for row in rows[1:]]
+        mean_z = sum(z_values) / len(z_values)
+        return math.sqrt(sum((value - mean_z) ** 2 for value in z_values) / len(z_values))
 
     if output_name != "ellipticity":
         values = [float(row[-1]) for row in rows[1:]]
@@ -83,3 +90,4 @@ def calculate_lp_fom(values, objective_config, p=None):
     if weight_sum <= 0.0:
         raise ValueError("sum of objective weights must be greater than zero")
     return (weighted_sum / weight_sum) ** (1.0 / p)
+

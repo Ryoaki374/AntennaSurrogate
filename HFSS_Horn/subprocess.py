@@ -1,15 +1,23 @@
 import os
 import time
-import csv
 import json
+import itertools
+import math
 
 import ScriptEnv
+
+from lib_hfss_metrics import (
+    calculate_phase_centers,
+    integrate_solid_angle,
+    numeric_values,
+    unique_sorted,
+)
 
 # --- Initialize the Scripting Environment ---
 ScriptEnv.Initialize("Ansoft.ElectronicsDesktop")
 
 # --- Configuration & Global Constants ---
-LOG_PATH = r"T:\RAkizawa\HFSS_Horn\src\output_log.txt"
+LOG_PATH = r"T:\RAkizawa\HFSS_Horn\src\output_log.log"
 CONFIG_PATH = r'T:\RAkizawa\HFSS_Horn\src\_config_HFSS.json'
 TOTAL_LENGTH_FILENAME = '.total_length'
 SCRIPT_START_TIME = time.time()
@@ -98,14 +106,6 @@ REPORT_SPECS = [
         "y_component": "db(mean(mag(S(Port1,Port1))))",
     },
     {
-        "output_name": "XPD",
-        "report_name": "XPD_Export_Report",
-        "category": "Antenna Parameters",
-        "context": ["Context:=", "Infinite Sphere1"],
-        "families": ["Freq:=", ["All"]],
-        "y_component": "dB20(MaxrELudwig3YComp/MaxrELudwig3XComp)",
-    },
-    {
         "output_name": "ellipticity",
         "report_name": "Ellipticity_Export_Report",
         "category": "Far Fields",
@@ -116,6 +116,19 @@ REPORT_SPECS = [
             "Phi:=", ["0deg", "90deg"],
         ],
         "y_component": "XWidthAtYVal(GainTotal/PeakGain, 0.5)",
+    },
+]
+
+PHASE_REPORT_SPECS = [
+    {
+        "report_name": "rETheta_Real_Export_Report",
+        "filename": "temp_rerETheta_export.csv",
+        "y_component": "re(rETheta)",
+    },
+    {
+        "report_name": "rETheta_Imag_Export_Report",
+        "filename": "temp_imrETheta_export.csv",
+        "y_component": "im(rETheta)",
     },
 ]
 
@@ -146,6 +159,208 @@ def export_reports():
         )
         printlog("[State] Exporting {} to: {}".format(report_name, output_path))
         oReportModule.ExportToFile(report_name, output_path, False)
+
+
+def _write_rows(output_path, header, rows):
+    """Publish a completed CSV without exposing a partially written result."""
+    partial_path = output_path + ".partial"
+    with open(partial_path, "w") as output_file:
+        output_file.write(",".join(str(value) for value in header) + "\n")
+        for row in rows:
+            output_file.write(",".join("{:.16g}".format(value) for value in row) + "\n")
+    if os.path.exists(output_path):
+        os.remove(output_path)
+    os.rename(partial_path, output_path)
+
+
+def _find_name_case_insensitive(names, requested):
+    requested_lower = requested.lower()
+    for name in names:
+        if str(name).lower() == requested_lower:
+            return str(name)
+    raise RuntimeError("Sweep '{}' was not returned".format(requested))
+
+
+def _get_far_field_grid(frequency, theta_values, phi_values):
+    """Read the GainL3 grid used by the verified Crosspol integration."""
+    expressions = ["GainL3X", "GainL3Y", "GainTotal"]
+    result_array = oReportModule.GetSolutionDataPerVariation(
+        "Far Fields",
+        "Setup1 : Sweep",
+        ["Context:=", "Infinite Sphere1"],
+        [
+            "Theta:=", ["All"],
+            "Phi:=", ["All"],
+            "Freq:=", [frequency],
+        ],
+        expressions,
+    )
+    if result_array is None or len(result_array) != 1:
+        raise RuntimeError("Unexpected far-field result count at {}".format(frequency))
+
+    data = result_array[0]
+    try:
+        sweep_order = [str(name) for name in list(data.GetSweepNames())]
+        sweep_order.reverse()
+        theta_name = _find_name_case_insensitive(sweep_order, "Theta")
+        phi_name = _find_name_case_insensitive(sweep_order, "Phi")
+
+        sweep_values = {}
+        sweep_units = {}
+        for sweep_name in sweep_order:
+            sweep_values[sweep_name] = unique_sorted(
+                data.GetSweepValues(sweep_name, False)
+            )
+            try:
+                sweep_units[sweep_name] = str(data.GetSweepUnits(sweep_name)).lower()
+            except Exception:
+                sweep_units[sweep_name] = ""
+
+        dimensions = [sweep_values[name] for name in sweep_order]
+        expected_count = 1
+        for dimension in dimensions:
+            expected_count *= len(dimension)
+
+        expression_values = {}
+        for expression in expressions:
+            values = [float(value) for value in data.GetRealDataValues(expression, False)]
+            if len(values) != expected_count:
+                raise RuntimeError("{} returned an unexpected value count".format(expression))
+            expression_values[expression] = values
+
+        wanted_theta = dict((round(value, 8), value) for value in theta_values)
+        wanted_phi = dict((round(value, 8), value) for value in phi_values)
+        grid = {}
+        for flat_index, coordinates in enumerate(itertools.product(*dimensions)):
+            coordinate = dict(zip(sweep_order, coordinates))
+            theta_deg = float(coordinate[theta_name])
+            phi_deg = float(coordinate[phi_name])
+            if "rad" in sweep_units[theta_name]:
+                theta_deg = math.degrees(theta_deg)
+            if "rad" in sweep_units[phi_name]:
+                phi_deg = math.degrees(phi_deg)
+
+            theta_key = round(theta_deg, 8)
+            phi_key = round(phi_deg, 8)
+            if theta_key not in wanted_theta or phi_key not in wanted_phi:
+                continue
+
+            theta_value = wanted_theta[theta_key]
+            phi_value = wanted_phi[phi_key]
+            gains = []
+            for expression in expressions:
+                value = expression_values[expression][flat_index]
+                if math.isnan(value) or math.isinf(value):
+                    if abs(math.sin(math.radians(theta_value))) < 1.0e-14:
+                        value = 0.0
+                    else:
+                        raise RuntimeError(
+                            "Non-finite {} at {}, Phi={}deg, Theta={}deg".format(
+                                expression, frequency, phi_value, theta_value
+                            )
+                        )
+                gains.append(value)
+            grid[(theta_value, phi_value)] = tuple(gains)
+
+        expected_grid_size = len(theta_values) * len(phi_values)
+        if len(grid) != expected_grid_size:
+            raise RuntimeError(
+                "Incomplete Crosspol angular grid at {}: returned {}, expected {}".format(
+                    frequency, len(grid), expected_grid_size
+                )
+            )
+        return grid
+    finally:
+        try:
+            data.ReleaseData()
+        except Exception:
+            pass
+
+
+def export_crosspol():
+    """Calculate the band Crosspol samples using the attached test.py method."""
+    output_path = temp_output_paths.get("Crosspol")
+    if not output_path:
+        printlog("[State] Skipping unconfigured output: Crosspol")
+        return
+
+    frequency_values = numeric_values(85.0, 175.0, 1.0)
+    theta_values = numeric_values(-15.0, 15.0, 0.5)
+    phi_values = numeric_values(0.0, 90.0, 1.0)
+    rows = []
+    printlog("[State] Calculating Crosspol over 85-175 GHz")
+    for index, frequency_ghz in enumerate(frequency_values, 1):
+        frequency = "{:g}GHz".format(frequency_ghz)
+        grid = _get_far_field_grid(frequency, theta_values, phi_values)
+        integral_l3x = integrate_solid_angle(theta_values, phi_values, grid, 0)
+        integral_l3y = integrate_solid_angle(theta_values, phi_values, grid, 1)
+        integral_total = integrate_solid_angle(theta_values, phi_values, grid, 2)
+        if integral_total == 0.0:
+            raise ZeroDivisionError("Integrated GainTotal is zero at {}".format(frequency))
+        copol = integral_l3x / integral_total
+        crosspol = integral_l3y / integral_total
+        rows.append((frequency_ghz, crosspol))
+        printlog(
+            "[Crosspol {}/{}] {}: Copol={:.16g}, Crosspol={:.16g}".format(
+                index, len(frequency_values), frequency, copol, crosspol
+            )
+        )
+
+    _write_rows(output_path, ["Frequency_GHz", "Crosspol"], rows)
+    printlog("[State] Exported Crosspol to: {}".format(output_path))
+
+
+def export_phasecenter():
+    """Export complex rETheta and calculate phase center versus frequency."""
+    output_path = temp_output_paths.get("phasecenter")
+    if not output_path:
+        printlog("[State] Skipping unconfigured output: phasecenter")
+        return
+
+    existing_reports = oReportModule.GetAllReportNames()
+    raw_paths = []
+    for report in PHASE_REPORT_SPECS:
+        report_name = report["report_name"]
+        raw_path = os.path.join(WATCH_DIR, report["filename"])
+        raw_paths.append(raw_path)
+        if report_name in existing_reports:
+            oReportModule.DeleteReports([report_name])
+        if os.path.exists(raw_path):
+            os.remove(raw_path)
+
+        printlog("[State] Creating report: {}".format(report_name))
+        oReportModule.CreateReport(
+            report_name,
+            "Far Fields",
+            "Data Table",
+            "Setup1 : Sweep",
+            ["Context:=", "Infinite Sphere1"],
+            [
+                "Theta:=", ["All"],
+                "Phi:=", ["0deg"],
+                "Freq:=", ["All"],
+            ],
+            [
+                "X Component:=", "Theta",
+                "Y Component:=", [report["y_component"]],
+            ],
+        )
+        oReportModule.ExportToFile(report_name, raw_path, False)
+        printlog("[State] Exported {} to: {}".format(report_name, raw_path))
+
+    results = calculate_phase_centers(raw_paths[0], raw_paths[1])
+    _write_rows(
+        output_path,
+        ["Frequency_GHz", "PhaseCenterZ_mm", "MinimumPhasePkPk_deg"],
+        results,
+    )
+    printlog("[State] Exported phasecenter to: {}".format(output_path))
+
+    for raw_path in raw_paths:
+        try:
+            os.remove(raw_path)
+        except OSError:
+            pass
 
 
 def read_total_length_mm(total_length_path):
@@ -406,6 +621,8 @@ def runSimulation():
             oReportModule = oDesign.GetModule("ReportSetup")
 
             export_reports()
+            export_phasecenter()
+            export_crosspol()
 
     except Exception as e:
         printlog("[ERROR] HFSS simulation: {}".format(e))
@@ -418,7 +635,7 @@ def runSimulation():
 
                     existing_reports = oReportModule.GetAllReportNames()
                     reports_to_delete = [
-                        report["report_name"] for report in REPORT_SPECS
+                        report["report_name"] for report in REPORT_SPECS + PHASE_REPORT_SPECS
                         if report["report_name"] in existing_reports
                     ]
                     if reports_to_delete:
@@ -469,3 +686,4 @@ while True:
 printlog("--- All Completed ---")
 
 #'''
+
