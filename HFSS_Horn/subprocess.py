@@ -229,6 +229,9 @@ try:
     #printlog("[Debug] {}, {}".format(config["n_repeats"], config["n_simulation"]))
 
     DONE_FLAG_FILE = config.get("DONE_FLAG_FILE", os.path.join(WATCH_DIR, "hfss.done"))
+    RESULT_READY_FILE = config.get(
+        "RESULT_READY_FILE", os.path.join(WATCH_DIR, "hfss_result.ready")
+    )
     printlog("Configuration loaded. WATCH_DIR: {}. Done flag: {}".format(WATCH_DIR, DONE_FLAG_FILE))
 except Exception as e:
     printlog("[ERROR][loading config] {}".format(e))
@@ -340,6 +343,17 @@ def _write_rows(output_path, header, rows):
     if os.path.exists(output_path):
         os.remove(output_path)
     os.rename(partial_path, output_path)
+
+
+def publish_result_ready():
+    """Notify the main process only after every requested output is complete."""
+    partial_path = RESULT_READY_FILE + ".partial"
+    with open(partial_path, "w") as ready_file:
+        ready_file.write("ready\n")
+    if os.path.exists(RESULT_READY_FILE):
+        os.remove(RESULT_READY_FILE)
+    os.rename(partial_path, RESULT_READY_FILE)
+    printlog("[State] Published result-ready flag: {}".format(RESULT_READY_FILE))
 
 
 def _find_name_case_insensitive(names, requested):
@@ -544,6 +558,12 @@ def read_total_length_mm(total_length_path):
 def runSimulation():
     oRadFieldModule = None
     try:
+            if os.path.exists(RESULT_READY_FILE):
+                os.remove(RESULT_READY_FILE)
+            ready_partial_path = RESULT_READY_FILE + ".partial"
+            if os.path.exists(ready_partial_path):
+                os.remove(ready_partial_path)
+
             # model import
             printlog("[State] Importing step file from: {}".format(MODEL_FILE))
             oEditor = oDesign.SetActiveEditor("3D Modeler")
@@ -792,6 +812,7 @@ def runSimulation():
             export_reports()
             export_phasecenter()
             export_crosspol()
+            publish_result_ready()
 
     except Exception as e:
         printlog("[ERROR] HFSS simulation: {}".format(e))
@@ -855,5 +876,6 @@ while True:
 printlog("--- All Completed ---")
 
 #'''
+
 
 
