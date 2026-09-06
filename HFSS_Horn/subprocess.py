@@ -283,7 +283,7 @@ REPORT_SPECS = [
             "CoaxLength:=", ["Nominal"],
             "CoaxInnerDiameter:=", ["Nominal"],
         ],
-        "y_component": "db(mean(mag(S(Port1,Port1))))",
+        "y_component": "db(max(mag(S(Port1,Port1))))",
     },
     {
         "output_name": "ellipticity",
