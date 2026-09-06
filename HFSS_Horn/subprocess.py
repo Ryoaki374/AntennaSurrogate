@@ -4,7 +4,6 @@ import json
 import itertools
 import math
 import csv
-import re
 
 import ScriptEnv
 
@@ -12,7 +11,6 @@ import ScriptEnv
 # Keep these numerical helpers in this file because HFSS IronPython does not
 # reliably import the adjacent lib_hfss_metrics module.
 C0 = 299792458.0
-FREQUENCY_PATTERN = re.compile(r"Freq='([0-9.]+)GHz'")
 
 
 def numeric_values(start, stop, step):
@@ -58,30 +56,57 @@ def integrate_solid_angle(theta_values, phi_values, grid, component_index):
 
 
 def _load_retheta_table(path, component, phi_deg=0.0):
-    """Load one HFSS wide-table export of re/im(rETheta)."""
+    """Load an HFSS Data Table export of re/im(rETheta)."""
     with open(path, "r") as csv_file:
         rows = list(csv.reader(csv_file))
     if len(rows) < 2:
         raise ValueError("rETheta export must contain a header and data rows")
 
     component_name = "re(rETheta)" if component == "re" else "im(rETheta)"
-    phi_tag = "Phi='{:g}deg'".format(phi_deg)
-    selected_columns = []
-    for column_index, header in enumerate(rows[0][1:], 1):
-        if component_name not in header:
-            continue
-        if "Phi=" in header and phi_tag not in header:
-            continue
-        match = FREQUENCY_PATTERN.search(header)
-        if match:
-            selected_columns.append((column_index, float(match.group(1))))
-    if not selected_columns:
-        raise ValueError("No {} columns found in {}".format(component_name, path))
+    headers = rows[0]
 
-    theta = [float(row[0]) for row in rows[1:]]
+    # AEDT 2023.2 normally exports Data Tables in this long format:
+    # Freq [GHz], Phi [deg], Theta [deg], re(rETheta) [V]
+    frequency_column = None
+    phi_column = None
+    theta_column = None
+    component_column = None
+    for column_index, header in enumerate(headers):
+        header_lower = header.lower()
+        if header_lower.startswith("freq"):
+            frequency_column = column_index
+        elif header_lower.startswith("phi"):
+            phi_column = column_index
+        elif header_lower.startswith("theta"):
+            theta_column = column_index
+        if component_name.lower() in header_lower:
+            component_column = column_index
+
+    if None in (frequency_column, phi_column, theta_column, component_column):
+        raise ValueError("Required rETheta columns were not found in {}".format(path))
+
+    samples_by_frequency = {}
+    for row in rows[1:]:
+        if abs(float(row[phi_column]) - phi_deg) > 1.0e-10:
+            continue
+        frequency_ghz = float(row[frequency_column])
+        samples_by_frequency.setdefault(frequency_ghz, []).append((
+            float(row[theta_column]),
+            float(row[component_column]),
+        ))
+    if not samples_by_frequency:
+        raise ValueError("No {} rows found in {}".format(component_name, path))
+
+    theta = None
     data = {}
-    for column_index, frequency_ghz in selected_columns:
-        data[frequency_ghz] = [float(row[column_index]) for row in rows[1:]]
+    for frequency_ghz in sorted(samples_by_frequency):
+        samples = sorted(samples_by_frequency[frequency_ghz])
+        current_theta = [sample[0] for sample in samples]
+        if theta is None:
+            theta = current_theta
+        elif current_theta != theta:
+            raise ValueError("Theta samples differ between frequencies in {}".format(path))
+        data[frequency_ghz] = [sample[1] for sample in samples]
     return theta, data
 
 
