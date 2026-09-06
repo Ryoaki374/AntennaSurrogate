@@ -176,9 +176,21 @@ class Backbone:
     def call_subroutine(self, config, index, param_names, param_values, value_fmt=None):
         model_paths, _ = self._get_path_models()
         temp_files = self._get_temp_output_paths()
+        result_ready_file = Path(
+            config.get("RESULT_READY_FILE", Path(config["WATCH_DIR"]) / "hfss_result.ready")
+        )
 
         if len(model_paths) != 1:
             raise ValueError(f"Horn workflow expects exactly one model path, got {len(model_paths)}: {model_paths}")
+
+        # Remove outputs from a previous or interrupted simulation.  Otherwise
+        # their mere existence can make the main process consume a new S11 file
+        # while HFSS is still calculating the remaining metrics.
+        stale_paths = [result_ready_file]
+        for path in temp_files:
+            stale_paths.extend((path, Path(str(path) + ".partial")))
+        for path in stale_paths:
+            path.unlink(missing_ok=True)
 
         group_order = self.cfg.hfss.group_order or list(self.cfg.hfss.param_groups.keys())
         grouped_values = {}
@@ -226,11 +238,28 @@ class Backbone:
         )
         self._write_total_length_file(total_length, value_fmt)
 
+        print(f"  > Waiting for HFSS result-ready flag: {result_ready_file}")
+        last_wait_log = 0.0
         while True:
-            if all(path.exists() and path.stat().st_size > 0 for path in temp_files):
+            outputs_ready = all(
+                path.exists() and path.stat().st_size > 0 for path in temp_files
+            )
+            if result_ready_file.exists() and outputs_ready:
                 time.sleep(0.5)
+                result_ready_file.unlink(missing_ok=True)
                 print("  > Result received from HFSS.")
                 return True
+
+            now = time.time()
+            if now - last_wait_log >= 30.0:
+                missing = [
+                    path.name for path in temp_files
+                    if not path.exists() or path.stat().st_size == 0
+                ]
+                if not result_ready_file.exists():
+                    missing.append(result_ready_file.name)
+                print("  > Waiting for HFSS outputs: " + ", ".join(missing))
+                last_wait_log = now
             time.sleep(1)
 
     def LHSsampler(self, dims, nums, lower_bounds, upper_bounds):
@@ -338,3 +367,4 @@ class Backbone:
         print("\n" + "=" * 75)
         print(text)
         print("=" * 75)
+
