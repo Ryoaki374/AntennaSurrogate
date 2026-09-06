@@ -22,21 +22,21 @@ def test_normalize_handles_minimized_negative_db_values():
     assert normalize_objective(-40.0, -30.0, -10.0) == 0.0
 
 
-def test_calculate_lp_fom_combines_s11_and_xpd():
+def test_calculate_lp_fom_combines_s11_and_crosspol():
     config = SimpleNamespace(
         p=2.0,
         terms=[
             SimpleNamespace(column="S11", weight=1.0, target=-30.0, limit=-10.0),
-            SimpleNamespace(column="XPD", weight=1.0, target=-30.0, limit=-10.0),
+            SimpleNamespace(column="Crosspol", weight=1.0, target=0.0, limit=0.1),
         ],
     )
-    assert calculate_lp_fom({"S11": -20.0, "XPD": -20.0}, config) == pytest.approx(0.5)
+    assert calculate_lp_fom({"S11": -20.0, "Crosspol": 0.05}, config) == pytest.approx(0.5)
 
 
 def test_calculate_lp_fom_rejects_missing_outputs():
     config = {"p": 2.0, "terms": [{"column": "S11", "weight": 1.0, "target": -30, "limit": -10}]}
     with pytest.raises(ValueError, match="differ"):
-        calculate_lp_fom({"XPD": -20.0}, config)
+        calculate_lp_fom({"Crosspol": 0.05}, config)
 
 
 def test_calculate_lp_fom_accepts_an_explicit_p_override():
@@ -51,7 +51,7 @@ def test_active_hfss_outputs_match_objective_terms():
 
     output_names = [output["name"] for output in config["io"]["temp_outputs"]]
     objective_columns = [term["column"] for term in config["objective"]["terms"]]
-    assert output_names == ["S11", "XPD", "ellipticity", "phase_center"]
+    assert output_names == ["S11", "Crosspol", "ellipticity", "phasecenter"]
     assert objective_columns == output_names
 
 
@@ -113,3 +113,17 @@ def test_read_temp_output_rejects_zero_ellipticity_denominator(tmp_path):
 
     with pytest.raises(ValueError, match="sum to zero"):
         read_temp_output(export, "ellipticity")
+
+
+def test_read_temp_output_calculates_phasecenter_stability(tmp_path):
+    export = tmp_path / "phasecenter.csv"
+    export.write_text(
+        "Frequency_GHz,PhaseCenterZ_mm,MinimumPhasePkPk_deg\n"
+        "85,-1.0,2.0\n"
+        "86,0.0,1.0\n"
+        "87,1.0,2.0\n",
+        encoding="utf-8",
+    )
+
+    assert read_temp_output(export, "phasecenter") == pytest.approx((2.0 / 3.0) ** 0.5)
+
