@@ -222,7 +222,7 @@ class Backbone:
             total_length=total_length,
             section_fracs=section_fracs,
             n_pts_z=n_pts,
-            n_pts_c=24,
+            n_pts_c=36,
         )
         self._write_total_length_file(total_length, value_fmt)
 
@@ -338,3 +338,4 @@ class Backbone:
         print("\n" + "=" * 75)
         print(text)
         print("=" * 75)
+
