@@ -40,14 +40,20 @@ def test_phasecenter_minimizes_unwrapped_phase_pkpk(tmp_path):
         with path.open("w", newline="") as output_file:
             writer = csv.writer(output_file)
             writer.writerow([
+                "Freq [GHz]",
+                "Phi [deg]",
                 "Theta [deg]",
-                "{}(rETheta) [V] - Freq='100GHz' Phi='0deg'".format(component),
+                "{}(rETheta) [V]".format(component),
             ])
-            writer.writerows(zip(theta_values, values))
+            writer.writerows(
+                (frequency_ghz, 0.0, theta, value)
+                for theta, value in zip(theta_values, values)
+            )
 
     result = calculate_phase_centers(str(re_path), str(im_path))
 
     assert result[0][0] == 100.0
     assert result[0][1] == pytest.approx(expected_z_mm)
     assert result[0][2] == pytest.approx(0.0, abs=1.0e-10)
+
 
