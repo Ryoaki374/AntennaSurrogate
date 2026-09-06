@@ -258,7 +258,14 @@ for output in TEMP_OUTPUTS:
     if output.get("name") and output.get("path"):
         temp_output_paths[output["name"]] = output["path"]
 
-temp_output_paths.setdefault("S11", os.path.join(WATCH_DIR, "temp_hfss_export.csv"))
+temp_output_paths.setdefault("S11", os.path.join(WATCH_DIR, "temp_S11_export.csv"))
+
+for output_name in sorted(temp_output_paths):
+    printlog(
+        "[Config] {} output path: {}".format(
+            output_name, temp_output_paths[output_name]
+        )
+    )
 
 
 REPORT_SPECS = [
@@ -332,6 +339,21 @@ def export_reports():
         )
         printlog("[State] Exporting {} to: {}".format(report_name, output_path))
         oReportModule.ExportToFile(report_name, output_path, False)
+        for _ in range(50):
+            if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+                break
+            time.sleep(0.1)
+        else:
+            raise RuntimeError(
+                "{} did not create a non-empty file at {}".format(
+                    report_name, output_path
+                )
+            )
+        printlog(
+            "[State] Verified {} output: {} bytes at {}".format(
+                report_name, os.path.getsize(output_path), output_path
+            )
+        )
 
 def _write_rows(output_path, header, rows):
     """Publish a completed CSV without exposing a partially written result."""
