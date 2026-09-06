@@ -156,6 +156,9 @@ def read_temp_output(csv_path, output_name):
     if len(rows) < 2:
         raise ValueError("HFSS output CSV must contain a header and at least one data row")
 
+    if output_name == "phase_center":
+        return calculate_phase_center_stability(csv_path)
+
     if output_name == "phasecenter":
         return _population_std([float(row[1]) for row in rows[1:]])
 
