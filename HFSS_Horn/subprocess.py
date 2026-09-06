@@ -88,6 +88,12 @@ for output in TEMP_OUTPUTS:
 
 temp_output_paths.setdefault("S11", os.path.join(WATCH_DIR, "temp_hfss_export.csv"))
 
+
+def phase_center_imag_path(real_path):
+    """Return the private imaginary-field export paired with a real-field CSV."""
+    root, extension = os.path.splitext(real_path)
+    return root + "_imag" + extension
+
 REPORT_SPECS = [
     {
         "output_name": "S11",
@@ -159,6 +165,8 @@ def export_reports():
         )
         printlog("[State] Exporting {} to: {}".format(report_name, output_path))
         oReportModule.ExportToFile(report_name, output_path, False)
+
+    export_phase_center_reports(existing_reports)
 
 
 def _write_rows(output_path, header, rows):
@@ -638,6 +646,10 @@ def runSimulation():
                         report["report_name"] for report in REPORT_SPECS + PHASE_REPORT_SPECS
                         if report["report_name"] in existing_reports
                     ]
+                    reports_to_delete.extend(
+                        report["report_name"] for report in PHASE_CENTER_REPORTS
+                        if report["report_name"] in existing_reports
+                    )
                     if reports_to_delete:
                         oReportModule.DeleteReports(reports_to_delete)
 
