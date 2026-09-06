@@ -52,27 +52,27 @@
     column = "S11"
     weight = 1.0
     target = -30.0
-    limit = -10.0
+    limit = -20.0
 
     [[objective.terms]]
     column = "Crosspol"
     weight = 1.0
-    # Linear power fraction. These equal -20 dB and -5 dB, respectively.
+    # Linear power fraction. These equal -20 dB and about -13.0 dB, respectively.
     target = 0.01
-    limit = 0.3162277660
+    limit = 0.05
 
     [[objective.terms]]
     column = "ellipticity"
-    weight = 0.1
-    target = 0.0
-    limit = 3.0
+    weight = 1.0
+    target = 0.05
+    limit = 0.2
 
     [[objective.terms]]
     column = "phasecenter"
     weight = 1.0
     # Population standard deviation of phase-center z over frequency, in mm.
-    target = 0.0
-    limit = 1.0
+    target = 2.0
+    limit = 5.0
 
 # ------------------------------------------------------------  HFSS simulation
 [hfss]

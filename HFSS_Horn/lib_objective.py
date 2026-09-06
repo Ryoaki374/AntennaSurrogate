@@ -132,14 +132,23 @@ def calculate_phase_center_stability(real_csv_path):
     return math.sqrt(variance)
 
 
+def _population_std(values):
+    """Return the population standard deviation of a non-empty sequence."""
+    if not values:
+        raise ValueError("population standard deviation requires at least one value")
+    mean_value = sum(values) / len(values)
+    return math.sqrt(sum((value - mean_value) ** 2 for value in values) / len(values))
+
+
 def read_temp_output(csv_path, output_name):
     """Reduce an HFSS CSV export to the scalar used by the optimizer.
 
-    Scalar reports (currently S11 and Crosspol) use the mean of their last data
-    column.  The ellipticity report contains frequency followed by the Phi=0
+    S11 uses the worst (maximum) in-band dB value. Crosspol uses its band
+    average. The ellipticity report contains frequency followed by the Phi=0
     and Phi=90 half-power beam widths; its per-frequency ellipticity is
-    (Phi90 - Phi0) / (Phi90 + Phi0).  The phase-center report contains the
-    best z at each frequency and reduces to the population standard deviation
+    (Phi90 - Phi0) / (Phi90 + Phi0), reduced to the population standard
+    deviation over frequency. The phase-center report contains the best z at
+    each frequency and likewise reduces to the population standard deviation
     of z over frequency.
     """
     with open(csv_path, newline="", encoding="utf-8-sig") as csv_file:
@@ -147,14 +156,20 @@ def read_temp_output(csv_path, output_name):
     if len(rows) < 2:
         raise ValueError("HFSS output CSV must contain a header and at least one data row")
 
+    if output_name == "phase_center":
+        return calculate_phase_center_stability(csv_path)
+
     if output_name == "phasecenter":
-        z_values = [float(row[1]) for row in rows[1:]]
-        mean_z = sum(z_values) / len(z_values)
-        return math.sqrt(sum((value - mean_z) ** 2 for value in z_values) / len(z_values))
+        return _population_std([float(row[1]) for row in rows[1:]])
+
+    if output_name in ("S11", "Crosspol"):
+        values = [float(row[-1]) for row in rows[1:]]
+        if output_name == "S11":
+            return max(values)
+        return sum(values) / len(values)
 
     if output_name != "ellipticity":
-        values = [float(row[-1]) for row in rows[1:]]
-        return sum(values) / len(values)
+        raise ValueError("unsupported HFSS output: {}".format(output_name))
 
     if len(rows[0]) < 3:
         raise ValueError("ellipticity CSV must contain frequency, Phi=0, and Phi=90 columns")
@@ -165,7 +180,7 @@ def read_temp_output(csv_path, output_name):
         if denominator == 0:
             raise ValueError("ellipticity is undefined when Phi=0 and Phi=90 widths sum to zero")
         ellipticities.append((phi_90 - phi_0) / denominator)
-    return sum(ellipticities) / len(ellipticities)
+    return _population_std(ellipticities)
 
 
 def _get_field(value, name):

@@ -53,6 +53,18 @@ def test_active_hfss_outputs_match_objective_terms():
     objective_columns = [term["column"] for term in config["objective"]["terms"]]
     assert output_names == ["S11", "Crosspol", "ellipticity", "phasecenter"]
     assert objective_columns == output_names
+    assert config["objective"]["terms"] == [
+        {"column": "S11", "weight": 1.0, "target": -30.0, "limit": -20.0},
+        {"column": "Crosspol", "weight": 1.0, "target": 0.01, "limit": 0.05},
+        {"column": "ellipticity", "weight": 1.0, "target": 0.05, "limit": 0.2},
+        {"column": "phasecenter", "weight": 1.0, "target": 2.0, "limit": 5.0},
+    ]
+
+
+def test_subprocess_uses_hfss_native_max_for_s11():
+    subprocess_path = Path(__file__).resolve().parents[1] / "subprocess.py"
+    source = subprocess_path.read_text(encoding="utf-8")
+    assert '"y_component": "db(max(mag(S(Port1,Port1))))"' in source
 
 
 def test_read_temp_output_calculates_phase_center_frequency_stability(tmp_path):
@@ -95,16 +107,35 @@ def test_phase_center_rejects_legacy_long_form_csv(tmp_path):
         read_temp_output(real_export, "phase_center")
 
 
-def test_read_temp_output_calculates_mean_ellipticity(tmp_path):
+def test_read_temp_output_uses_worst_in_band_s11(tmp_path):
+    export = tmp_path / "s11.csv"
+    export.write_text(
+        "Freq,S11_dB\n80,-30\n90,-18\n100,-25\n",
+        encoding="utf-8",
+    )
+    assert read_temp_output(export, "S11") == pytest.approx(-18.0)
+
+
+def test_read_temp_output_uses_crosspol_band_average(tmp_path):
+    export = tmp_path / "crosspol.csv"
+    export.write_text(
+        "Freq,Crosspol\n80,0.01\n90,0.04\n100,0.10\n",
+        encoding="utf-8",
+    )
+    assert read_temp_output(export, "Crosspol") == pytest.approx(0.05)
+
+
+def test_read_temp_output_calculates_ellipticity_frequency_stability(tmp_path):
     export = tmp_path / "ellipticity.csv"
     export.write_text(
         '"Freq [GHz]","width - Phi=0","width - Phi=90"\n'
         "80,20,30\n"
-        "81,30,30\n",
+        "81,30,30\n"
+        "82,30,30\n",
         encoding="utf-8",
     )
 
-    assert read_temp_output(export, "ellipticity") == pytest.approx(0.1)
+    assert read_temp_output(export, "ellipticity") == pytest.approx(math.sqrt(2.0) / 15.0)
 
 
 def test_read_temp_output_rejects_zero_ellipticity_denominator(tmp_path):
