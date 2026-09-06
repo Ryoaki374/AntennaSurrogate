@@ -80,7 +80,7 @@
     n_repeats = 1
     n_init = 20
     n_params = 7
-    n_pts = 80
+    n_pts = 30
     group_order = ["Horn"]
     filename_models = ["Horn.step"]
 
@@ -91,7 +91,7 @@
     # inside the strict d_waveguide < d_m < d_aperture geometry requirement.
     param_names  = ["d_m", "l_tot", "f_wg", "f_t1", "f_mid", "f_t2", "f_ap"]
     param_units  = ["mm", "mm", "", "", "", "", ""]
-    lower_bounds = [2.4, 1.0, 0.05, 0.05, 0.05, 0.05, 0.05]
+    lower_bounds = [2.4, 10, 0.05, 0.05, 0.05, 0.05, 0.05]
     upper_bounds = [11.599999, 50.0, 0.999996, 0.999996, 0.999996, 0.999996, 0.999996]
     baseline     = [6.4, 20.0, 0.18, 0.27, 0.21, 0.20, 0.14]
     vary         = true
@@ -105,4 +105,5 @@
     lower_bounds    = [-32, -32, -32, -32, -32, -32, -32, -32, -32, -32]
     upper_bounds    = [32, 32, 32, 32, 32, 32, 32, 32, 32, 32]
     param_names     = ['x1', 'x2', 'x3', 'x4', 'x5', 'x6', 'x7', 'x8', 'x9', 'x10',]
+
 
