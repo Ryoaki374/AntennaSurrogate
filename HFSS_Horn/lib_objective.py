@@ -140,6 +140,72 @@ def _population_std(values):
     return math.sqrt(sum((value - mean_value) ** 2 for value in values) / len(values))
 
 
+def _ellipticities_from_rows(rows):
+    """Return finite per-frequency ellipticities from an HFSS CSV export."""
+    headers = [header.strip().lower() for header in rows[0]]
+    phi_index = next(
+        (
+            index
+            for index, header in enumerate(headers)
+            if re.match(r"^phi(?:\\s*\\[|$)", header)
+        ),
+        None,
+    )
+    frequency_index = next(
+        (index for index, header in enumerate(headers) if header.startswith("freq")),
+        None,
+    )
+
+    # HFSS normally exports the report in long form:
+    # Phi [deg], Freq [GHz], XWidthAtYVal(...) [deg].
+    if phi_index is not None and frequency_index is not None:
+        value_index = len(headers) - 1
+        widths_by_frequency = {}
+        invalid_frequencies = set()
+        for row in rows[1:]:
+            if len(row) <= max(phi_index, frequency_index, value_index):
+                continue
+            frequency = float(row[frequency_index])
+            phi = float(row[phi_index])
+            width = float(row[value_index])
+            if not all(math.isfinite(value) for value in (frequency, phi, width)):
+                invalid_frequencies.add(frequency)
+                continue
+            if abs(phi) <= 1.0e-10:
+                phi_key = 0
+            elif abs(phi - 90.0) <= 1.0e-10:
+                phi_key = 90
+            else:
+                continue
+            widths_by_frequency.setdefault(frequency, {})[phi_key] = width
+
+        ellipticities = []
+        for frequency in sorted(widths_by_frequency):
+            widths = widths_by_frequency[frequency]
+            if frequency in invalid_frequencies or 0 not in widths or 90 not in widths:
+                continue
+            denominator = widths[90] + widths[0]
+            if denominator == 0:
+                raise ValueError(
+                    "ellipticity is undefined when Phi=0 and Phi=90 widths sum to zero"
+                )
+            ellipticities.append((widths[90] - widths[0]) / denominator)
+        return ellipticities
+
+    # Retain support for the earlier wide test/export format:
+    # Freq, Phi=0 width, Phi=90 width.
+    ellipticities = []
+    for row in rows[1:]:
+        phi_0, phi_90 = float(row[1]), float(row[2])
+        if not math.isfinite(phi_0) or not math.isfinite(phi_90):
+            continue
+        denominator = phi_90 + phi_0
+        if denominator == 0:
+            raise ValueError("ellipticity is undefined when Phi=0 and Phi=90 widths sum to zero")
+        ellipticities.append((phi_90 - phi_0) / denominator)
+    return ellipticities
+
+
 def read_temp_output(csv_path, output_name):
     """Reduce an HFSS CSV export to the scalar used by the optimizer.
 
@@ -173,13 +239,9 @@ def read_temp_output(csv_path, output_name):
 
     if len(rows[0]) < 3:
         raise ValueError("ellipticity CSV must contain frequency, Phi=0, and Phi=90 columns")
-    ellipticities = []
-    for row in rows[1:]:
-        phi_0, phi_90 = float(row[1]), float(row[2])
-        denominator = phi_90 + phi_0
-        if denominator == 0:
-            raise ValueError("ellipticity is undefined when Phi=0 and Phi=90 widths sum to zero")
-        ellipticities.append((phi_90 - phi_0) / denominator)
+    ellipticities = _ellipticities_from_rows(rows)
+    if not ellipticities:
+        raise ValueError("ellipticity CSV contains no complete finite frequency samples")
     return _population_std(ellipticities)
 
 
