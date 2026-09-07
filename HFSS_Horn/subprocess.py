@@ -433,7 +433,7 @@ def _find_name_case_insensitive(names, requested):
 
 def _get_far_field_grid(frequency, theta_values, phi_values):
     """Read the GainL3 grid used by the verified Crosspol integration."""
-    expressions = ["GainL3X", "GainL3Y", "GainTotal"]
+    expressions = ["GainL3Y", "GainTotal"]
     result_array = oReportModule.GetSolutionDataPerVariation(
         "Far Fields",
         "Setup1 : Sweep",
@@ -528,31 +528,29 @@ def _get_far_field_grid(frequency, theta_values, phi_values):
 
 
 def export_crosspol():
-    """Calculate the band Crosspol samples using the attached test.py method."""
+    """Calculate Crosspol from 80 to 180 GHz at 5 GHz intervals."""
     output_path = temp_output_paths.get("Crosspol")
     if not output_path:
         printlog("[State] Skipping unconfigured output: Crosspol")
         return
 
-    frequency_values = numeric_values(85.0, 175.0, 1.0)
+    frequency_values = numeric_values(80.0, 180.0, 5.0)
     theta_values = numeric_values(-15.0, 15.0, 0.5)
     phi_values = numeric_values(0.0, 90.0, 1.0)
     rows = []
-    printlog("[State] Calculating Crosspol over 85-175 GHz")
+    printlog("[State] Calculating Crosspol over 80-180 GHz in 5 GHz steps")
     for index, frequency_ghz in enumerate(frequency_values, 1):
         frequency = "{:g}GHz".format(frequency_ghz)
         grid = _get_far_field_grid(frequency, theta_values, phi_values)
-        integral_l3x = integrate_solid_angle(theta_values, phi_values, grid, 0)
-        integral_l3y = integrate_solid_angle(theta_values, phi_values, grid, 1)
-        integral_total = integrate_solid_angle(theta_values, phi_values, grid, 2)
+        integral_l3y = integrate_solid_angle(theta_values, phi_values, grid, 0)
+        integral_total = integrate_solid_angle(theta_values, phi_values, grid, 1)
         if integral_total == 0.0:
             raise ZeroDivisionError("Integrated GainTotal is zero at {}".format(frequency))
-        copol = integral_l3x / integral_total
         crosspol = integral_l3y / integral_total
         rows.append((frequency_ghz, crosspol))
         printlog(
-            "[Crosspol {}/{}] {}: Copol={:.16g}, Crosspol={:.16g}".format(
-                index, len(frequency_values), frequency, copol, crosspol
+            "[Crosspol {}/{}] {}: Crosspol={:.16g}".format(
+                index, len(frequency_values), frequency, crosspol
             )
         )
 
