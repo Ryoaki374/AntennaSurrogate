@@ -4,6 +4,7 @@ import json
 import itertools
 import math
 import csv
+import shutil
 
 import ScriptEnv
 
@@ -189,6 +190,8 @@ ScriptEnv.Initialize("Ansoft.ElectronicsDesktop")
 LOG_PATH = r"T:\RAkizawa\HFSS_Horn\src\output_log.log"
 CONFIG_PATH = r'T:\RAkizawa\HFSS_Horn\src\_config_HFSS.json'
 TOTAL_LENGTH_FILENAME = '.total_length'
+ELLIPTICITY_NAN_MODEL_FILENAME = 'Horn_ellipticity_nan.step'
+ELLIPTICITY_NAN_CANDIDATE_FILENAME = '.Horn_ellipticity_nan_candidate.step'
 SCRIPT_START_TIME = time.time()
 
 # --- parameter definition ---
@@ -313,9 +316,20 @@ PHASE_REPORT_SPECS = [
 ]
 
 
+def _last_column_has_nan(csv_path):
+    """Return whether an HFSS CSV contains NaN in its reported value column."""
+    with open(csv_path, "r") as csv_file:
+        rows = list(csv.reader(csv_file))
+    for row in rows[1:]:
+        if row and math.isnan(float(row[-1])):
+            return True
+    return False
+
+
 def export_reports():
-    """Create and export each configured scalar-output report."""
+    """Create reports and return whether ellipticity contains any NaN."""
     existing_reports = oReportModule.GetAllReportNames()
+    ellipticity_has_nan = False
     for report in REPORT_SPECS:
         output_path = temp_output_paths.get(report["output_name"])
         if not output_path:
@@ -354,6 +368,37 @@ def export_reports():
                 report_name, os.path.getsize(output_path), output_path
             )
         )
+        if report["output_name"] == "ellipticity":
+            ellipticity_has_nan = _last_column_has_nan(output_path)
+            if ellipticity_has_nan:
+                printlog("[State] Ellipticity output contains NaN frequency samples.")
+    return ellipticity_has_nan
+
+
+def _stage_ellipticity_nan_model(model_path):
+    """Stage a model copy unless the first NaN-producing model already exists."""
+    saved_path = os.path.join(WATCH_DIR, ELLIPTICITY_NAN_MODEL_FILENAME)
+    if os.path.exists(saved_path):
+        return None
+    candidate_path = os.path.join(WATCH_DIR, ELLIPTICITY_NAN_CANDIDATE_FILENAME)
+    if os.path.exists(candidate_path):
+        os.remove(candidate_path)
+    shutil.copy2(model_path, candidate_path)
+    return candidate_path
+
+
+def _finish_ellipticity_nan_model(candidate_path, has_nan):
+    """Keep the staged model only when this is the first NaN-producing shape."""
+    if not candidate_path or not os.path.exists(candidate_path):
+        return
+    if has_nan:
+        saved_path = os.path.join(WATCH_DIR, ELLIPTICITY_NAN_MODEL_FILENAME)
+        if not os.path.exists(saved_path):
+            os.rename(candidate_path, saved_path)
+            printlog("[State] Preserved first ellipticity-NaN model: {}".format(saved_path))
+            return
+    os.remove(candidate_path)
+
 
 def _write_rows(output_path, header, rows):
     """Publish a completed CSV without exposing a partially written result."""
@@ -579,6 +624,7 @@ def read_total_length_mm(total_length_path):
 #'''
 def runSimulation():
     oRadFieldModule = None
+    nan_model_candidate = None
     try:
             if os.path.exists(RESULT_READY_FILE):
                 os.remove(RESULT_READY_FILE)
@@ -810,6 +856,7 @@ def runSimulation():
             # remove imported models
             if os.path.exists(MODEL_FILE[0]):
                 try:
+                    nan_model_candidate = _stage_ellipticity_nan_model(MODEL_FILE[0])
                     os.remove(MODEL_FILE[0])
                 except:
                     printlog("[ERROR] Could not delete input file.")
@@ -831,7 +878,9 @@ def runSimulation():
             # setup
             oReportModule = oDesign.GetModule("ReportSetup")
 
-            export_reports()
+            ellipticity_has_nan = export_reports()
+            _finish_ellipticity_nan_model(nan_model_candidate, ellipticity_has_nan)
+            nan_model_candidate = None
             export_phasecenter()
             export_crosspol()
             publish_result_ready()
@@ -840,6 +889,11 @@ def runSimulation():
         printlog("[ERROR] HFSS simulation: {}".format(e))
 
     finally:
+            if nan_model_candidate and os.path.exists(nan_model_candidate):
+                try:
+                    os.remove(nan_model_candidate)
+                except OSError as cleanup_e:
+                    printlog("[ERROR] Could not remove staged NaN model: {}".format(cleanup_e))
             # --- 5. Clean up HFSS project for the next run ---
             printlog("[State] Cleaning up a current HFSS simulation...")
             try:
