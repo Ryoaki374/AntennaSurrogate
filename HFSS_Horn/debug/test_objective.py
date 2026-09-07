@@ -138,6 +138,22 @@ def test_read_temp_output_calculates_ellipticity_frequency_stability(tmp_path):
     assert read_temp_output(export, "ellipticity") == pytest.approx(math.sqrt(2.0) / 15.0)
 
 
+def test_read_temp_output_skips_nan_ellipticity_frequencies_in_hfss_long_form(tmp_path):
+    export = tmp_path / "ellipticity.csv"
+    export.write_text(
+        '"Phi [deg]","Freq [GHz]","XWidthAtYVal(GainTotal/PeakGain, 0.5) [deg]"\n'
+        "0,80,20\n"
+        "0,81,nan\n"
+        "0,82,20\n"
+        "90,80,30\n"
+        "90,81,40\n"
+        "90,82,20\n",
+        encoding="utf-8",
+    )
+
+    assert read_temp_output(export, "ellipticity") == pytest.approx(0.1)
+
+
 def test_read_temp_output_rejects_zero_ellipticity_denominator(tmp_path):
     export = tmp_path / "ellipticity.csv"
     export.write_text("Freq,Phi0,Phi90\n80,-20,20\n", encoding="utf-8")
