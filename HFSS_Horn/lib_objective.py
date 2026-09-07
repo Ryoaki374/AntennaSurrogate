@@ -147,7 +147,7 @@ def _ellipticities_from_rows(rows):
         (
             index
             for index, header in enumerate(headers)
-            if re.match(r"^phi(?:\\s*\\[|$)", header)
+            if re.match(r"^phi(?:\s*\[|$)", header)
         ),
         None,
     )
