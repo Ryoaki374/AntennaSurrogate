@@ -94,6 +94,8 @@ def calculate_phase_center_stability(real_csv_path):
     imag = _read_far_field_component(_phase_center_imag_path(real_csv_path))
     if set(real) != set(imag):
         raise ValueError("real and imaginary phase-center exports have different frequency/theta rows")
+    if not all(math.isfinite(value) for value in list(real.values()) + list(imag.values())):
+        return math.nan
 
     by_frequency = {}
     for frequency, theta_deg in real:
@@ -141,7 +143,7 @@ def _population_std(values):
 
 
 def _ellipticities_from_rows(rows):
-    """Return finite per-frequency ellipticities from an HFSS CSV export."""
+    """Return per-frequency ellipticities, preserving non-finite samples."""
     headers = [header.strip().lower() for header in rows[0]]
     phi_index = next(
         (
@@ -168,7 +170,9 @@ def _ellipticities_from_rows(rows):
             frequency = float(row[frequency_index])
             phi = float(row[phi_index])
             width = float(row[value_index])
-            if not all(math.isfinite(value) for value in (frequency, phi, width)):
+            if not math.isfinite(frequency) or not math.isfinite(phi):
+                return [math.nan]
+            if not math.isfinite(width):
                 invalid_frequencies.add(frequency)
                 continue
             if abs(phi) <= 1.0e-10:
@@ -179,10 +183,13 @@ def _ellipticities_from_rows(rows):
                 continue
             widths_by_frequency.setdefault(frequency, {})[phi_key] = width
 
+        if invalid_frequencies:
+            return [math.nan]
+
         ellipticities = []
         for frequency in sorted(widths_by_frequency):
             widths = widths_by_frequency[frequency]
-            if frequency in invalid_frequencies or 0 not in widths or 90 not in widths:
+            if 0 not in widths or 90 not in widths:
                 continue
             denominator = widths[90] + widths[0]
             if denominator == 0:
@@ -198,7 +205,7 @@ def _ellipticities_from_rows(rows):
     for row in rows[1:]:
         phi_0, phi_90 = float(row[1]), float(row[2])
         if not math.isfinite(phi_0) or not math.isfinite(phi_90):
-            continue
+            return [math.nan]
         denominator = phi_90 + phi_0
         if denominator == 0:
             raise ValueError("ellipticity is undefined when Phi=0 and Phi=90 widths sum to zero")
@@ -230,6 +237,8 @@ def read_temp_output(csv_path, output_name):
 
     if output_name in ("S11", "Crosspol"):
         values = [float(row[-1]) for row in rows[1:]]
+        if not all(math.isfinite(value) for value in values):
+            return math.nan
         if output_name == "S11":
             return max(values)
         return sum(values) / len(values)
@@ -251,6 +260,29 @@ def _get_field(value, name):
     return getattr(value, name)
 
 
+def replace_nonfinite_objectives(values, objective_config):
+    """Replace non-finite objective outputs with their configured limits."""
+    terms = _get_field(objective_config, "terms")
+    limits = {
+        _get_field(term, "column"): float(_get_field(term, "limit"))
+        for term in terms
+    }
+    if set(values) != set(limits):
+        raise ValueError(
+            "objective outputs and configured columns differ: outputs={}, configured={}".format(
+                sorted(values), sorted(limits)
+            )
+        )
+    if not all(math.isfinite(limit) for limit in limits.values()):
+        raise ValueError("objective limits must be finite")
+
+    replaced = {}
+    for column, value in values.items():
+        numeric_value = float(value)
+        replaced[column] = numeric_value if math.isfinite(numeric_value) else limits[column]
+    return replaced
+
+
 def normalize_objective(value, target, limit):
     """Map target to zero and limit to one, clamping better values to zero."""
     value = float(value)
@@ -266,19 +298,12 @@ def normalize_objective(value, target, limit):
 def calculate_lp_fom(values, objective_config, p=None):
     """Return one weighted Lp objective from the configured scalar outputs."""
     terms = _get_field(objective_config, "terms")
+    values = replace_nonfinite_objectives(values, objective_config)
     if p is None:
         p = _get_field(objective_config, "p")
     p = float(p)
     if not math.isfinite(p) or p < 1.0:
         raise ValueError("objective p must be finite and at least one")
-
-    configured_columns = {_get_field(term, "column") for term in terms}
-    if set(values) != configured_columns:
-        raise ValueError(
-            "objective outputs and configured columns differ: outputs={}, configured={}".format(
-                sorted(values), sorted(configured_columns)
-            )
-        )
 
     weighted_sum = 0.0
     weight_sum = 0.0
