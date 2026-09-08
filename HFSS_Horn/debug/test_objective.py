@@ -13,6 +13,7 @@ from lib_objective import (
     calculate_lp_fom,
     normalize_objective,
     read_temp_output,
+    replace_nonfinite_objectives,
 )
 
 
@@ -116,6 +117,23 @@ def test_read_temp_output_uses_worst_in_band_s11(tmp_path):
     assert read_temp_output(export, "S11") == pytest.approx(-18.0)
 
 
+def test_nan_s11_is_replaced_by_its_configured_limit(tmp_path):
+    export = tmp_path / "s11.csv"
+    export.write_text(
+        "Freq,S11_dB\n80,-30\n90,nan\n100,-25\n",
+        encoding="utf-8",
+    )
+    config = {
+        "terms": [
+            {"column": "S11", "weight": 1.0, "target": -30.0, "limit": -17.0}
+        ]
+    }
+
+    raw_outputs = {"S11": read_temp_output(export, "S11")}
+    assert math.isnan(raw_outputs["S11"])
+    assert replace_nonfinite_objectives(raw_outputs, config) == {"S11": -17.0}
+
+
 def test_read_temp_output_uses_crosspol_band_average(tmp_path):
     export = tmp_path / "crosspol.csv"
     export.write_text(
@@ -138,7 +156,7 @@ def test_read_temp_output_calculates_ellipticity_frequency_stability(tmp_path):
     assert read_temp_output(export, "ellipticity") == pytest.approx(math.sqrt(2.0) / 15.0)
 
 
-def test_read_temp_output_skips_nan_ellipticity_frequencies_in_hfss_long_form(tmp_path):
+def test_nan_ellipticity_is_replaced_by_its_configured_limit(tmp_path):
     export = tmp_path / "ellipticity.csv"
     export.write_text(
         '"Phi [deg]","Freq [GHz]","XWidthAtYVal(GainTotal/PeakGain, 0.5) [deg]"\n'
@@ -151,7 +169,34 @@ def test_read_temp_output_skips_nan_ellipticity_frequencies_in_hfss_long_form(tm
         encoding="utf-8",
     )
 
-    assert read_temp_output(export, "ellipticity") == pytest.approx(0.1)
+    raw_outputs = {"ellipticity": read_temp_output(export, "ellipticity")}
+    config = {
+        "terms": [
+            {
+                "column": "ellipticity",
+                "weight": 1.0,
+                "target": 0.05,
+                "limit": 0.37,
+            }
+        ]
+    }
+
+    assert math.isnan(raw_outputs["ellipticity"])
+    assert replace_nonfinite_objectives(raw_outputs, config) == {"ellipticity": 0.37}
+    assert calculate_lp_fom(raw_outputs, config, p=2.0) == pytest.approx(1.0)
+
+
+def test_replace_nonfinite_objectives_preserves_finite_values():
+    config = {
+        "terms": [
+            {"column": "S11", "weight": 1.0, "target": -30.0, "limit": -20.0},
+            {"column": "Crosspol", "weight": 1.0, "target": 0.01, "limit": 0.05},
+        ]
+    }
+
+    assert replace_nonfinite_objectives(
+        {"S11": -24.0, "Crosspol": float("inf")}, config
+    ) == {"S11": -24.0, "Crosspol": 0.05}
 
 
 def test_read_temp_output_rejects_zero_ellipticity_denominator(tmp_path):
