@@ -33,6 +33,17 @@ def test_calculate_lp_fom_combines_s11_and_crosspol():
     assert calculate_lp_fom({"S11": -20.0, "Crosspol": 0.05}, config) == pytest.approx(0.5)
 
 
+def test_calculate_lp_fom_penalizes_nan_ellipticity_at_configured_limit():
+    config = {
+        "p": 2.0,
+        "terms": [
+            {"column": "ellipticity", "weight": 1.0, "target": 0.05, "limit": 0.37},
+        ],
+    }
+
+    assert calculate_lp_fom({"ellipticity": math.nan}, config) == pytest.approx(1.0)
+
+
 def test_calculate_lp_fom_rejects_missing_outputs():
     config = {"p": 2.0, "terms": [{"column": "S11", "weight": 1.0, "target": -30, "limit": -10}]}
     with pytest.raises(ValueError, match="differ"):
@@ -138,7 +149,7 @@ def test_read_temp_output_calculates_ellipticity_frequency_stability(tmp_path):
     assert read_temp_output(export, "ellipticity") == pytest.approx(math.sqrt(2.0) / 15.0)
 
 
-def test_read_temp_output_skips_nan_ellipticity_frequencies_in_hfss_long_form(tmp_path):
+def test_read_temp_output_marks_nan_ellipticity_frequency_as_invalid(tmp_path):
     export = tmp_path / "ellipticity.csv"
     export.write_text(
         '"Phi [deg]","Freq [GHz]","XWidthAtYVal(GainTotal/PeakGain, 0.5) [deg]"\n'
@@ -151,7 +162,7 @@ def test_read_temp_output_skips_nan_ellipticity_frequencies_in_hfss_long_form(tm
         encoding="utf-8",
     )
 
-    assert read_temp_output(export, "ellipticity") == pytest.approx(0.1)
+    assert math.isnan(read_temp_output(export, "ellipticity"))
 
 
 def test_read_temp_output_rejects_zero_ellipticity_denominator(tmp_path):
