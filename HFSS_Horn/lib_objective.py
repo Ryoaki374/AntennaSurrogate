@@ -141,7 +141,7 @@ def _population_std(values):
 
 
 def _ellipticities_from_rows(rows):
-    """Return finite per-frequency ellipticities from an HFSS CSV export."""
+    """Return valid per-frequency ellipticities and whether any sample is invalid."""
     headers = [header.strip().lower() for header in rows[0]]
     phi_index = next(
         (
@@ -162,14 +162,18 @@ def _ellipticities_from_rows(rows):
         value_index = len(headers) - 1
         widths_by_frequency = {}
         invalid_frequencies = set()
+        has_invalid = False
         for row in rows[1:]:
             if len(row) <= max(phi_index, frequency_index, value_index):
+                has_invalid = True
                 continue
             frequency = float(row[frequency_index])
             phi = float(row[phi_index])
             width = float(row[value_index])
             if not all(math.isfinite(value) for value in (frequency, phi, width)):
-                invalid_frequencies.add(frequency)
+                has_invalid = True
+                if math.isfinite(frequency):
+                    invalid_frequencies.add(frequency)
                 continue
             if abs(phi) <= 1.0e-10:
                 phi_key = 0
@@ -183,6 +187,7 @@ def _ellipticities_from_rows(rows):
         for frequency in sorted(widths_by_frequency):
             widths = widths_by_frequency[frequency]
             if frequency in invalid_frequencies or 0 not in widths or 90 not in widths:
+                has_invalid = True
                 continue
             denominator = widths[90] + widths[0]
             if denominator == 0:
@@ -190,20 +195,22 @@ def _ellipticities_from_rows(rows):
                     "ellipticity is undefined when Phi=0 and Phi=90 widths sum to zero"
                 )
             ellipticities.append((widths[90] - widths[0]) / denominator)
-        return ellipticities
+        return ellipticities, has_invalid
 
     # Retain support for the earlier wide test/export format:
     # Freq, Phi=0 width, Phi=90 width.
     ellipticities = []
+    has_invalid = False
     for row in rows[1:]:
         phi_0, phi_90 = float(row[1]), float(row[2])
         if not math.isfinite(phi_0) or not math.isfinite(phi_90):
+            has_invalid = True
             continue
         denominator = phi_90 + phi_0
         if denominator == 0:
             raise ValueError("ellipticity is undefined when Phi=0 and Phi=90 widths sum to zero")
         ellipticities.append((phi_90 - phi_0) / denominator)
-    return ellipticities
+    return ellipticities, has_invalid
 
 
 def read_temp_output(csv_path, output_name):
@@ -239,7 +246,9 @@ def read_temp_output(csv_path, output_name):
 
     if len(rows[0]) < 3:
         raise ValueError("ellipticity CSV must contain frequency, Phi=0, and Phi=90 columns")
-    ellipticities = _ellipticities_from_rows(rows)
+    ellipticities, has_invalid = _ellipticities_from_rows(rows)
+    if has_invalid:
+        return math.nan
     if not ellipticities:
         raise ValueError("ellipticity CSV contains no complete finite frequency samples")
     return _population_std(ellipticities)
@@ -287,8 +296,14 @@ def calculate_lp_fom(values, objective_config, p=None):
         weight = float(_get_field(term, "weight"))
         if not math.isfinite(weight) or weight < 0.0:
             raise ValueError("objective weights must be finite and non-negative")
+        limit = _get_field(term, "limit")
+        value = values[column]
+        # An invalid ellipticity is a failed beam-width measurement, not a
+        # zero-variation design. Penalize it at this term's configured limit.
+        if column == "ellipticity" and not math.isfinite(float(value)):
+            value = limit
         normalized = normalize_objective(
-            values[column], _get_field(term, "target"), _get_field(term, "limit")
+            value, _get_field(term, "target"), limit
         )
         weighted_sum += weight * normalized ** p
         weight_sum += weight
