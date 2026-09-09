@@ -2,7 +2,80 @@ from lib_config import AppConfig
 import numpy as np
 from scipy.optimize import minimize
 from scipy.stats import norm
+from scipy.stats.qmc import Sobol
 from typing import Sequence, Optional, List, Tuple, Callable, Any
+
+
+HORN_SIMPLEX_NAMES = ("f_wg", "f_t1", "f_mid", "f_t2", "f_ap")
+DEFAULT_SOBOL_CANDIDATES = 4096
+
+
+def _project_to_bounded_simplex(values, lower, upper, target=1.0, tol=1.0e-12, max_iter=100):
+    """Euclidean projection onto ``sum(x)=target`` with box bounds."""
+    values = np.asarray(values, dtype=float).reshape(-1)
+    lower = np.asarray(lower, dtype=float).reshape(-1)
+    upper = np.asarray(upper, dtype=float).reshape(-1)
+    if values.shape != lower.shape or values.shape != upper.shape:
+        raise ValueError("values, lower, and upper must have the same shape.")
+    if np.any(lower > upper):
+        raise ValueError("simplex lower bounds must not exceed upper bounds.")
+    if lower.sum() - target > tol or target - upper.sum() > tol:
+        raise ValueError("simplex bounds cannot satisfy the requested sum.")
+
+    lo = float(np.min(values - upper))
+    hi = float(np.max(values - lower))
+    for _ in range(max_iter):
+        mid = 0.5 * (lo + hi)
+        projected = np.clip(values - mid, lower, upper)
+        if projected.sum() > target:
+            lo = mid
+        else:
+            hi = mid
+    projected = np.clip(values - hi, lower, upper)
+    residual = target - projected.sum()
+    if abs(residual) > tol:
+        free = np.where((projected > lower + tol) & (projected < upper - tol))[0]
+        if free.size:
+            projected[free] += residual / free.size
+    return np.clip(projected, lower, upper)
+
+
+def _bounded_simplex_from_unit(unit, lower, upper, target=1.0):
+    """Map ``k-1`` unit coordinates to a bounded ``k``-part simplex.
+
+    The inverse-Beta stick-breaking map produces a uniform Dirichlet sample for
+    the mass remaining after the lower bounds are allocated.  Horn upper bounds
+    are non-binding once the five 0.05 lower bounds and sum-to-one constraint are
+    applied; unsupported binding upper bounds are rejected explicitly.
+    """
+    unit = np.asarray(unit, dtype=float)
+    if unit.ndim == 1:
+        unit = unit.reshape(1, -1)
+    lower = np.asarray(lower, dtype=float).reshape(-1)
+    upper = np.asarray(upper, dtype=float).reshape(-1)
+    k = lower.size
+    if unit.shape[1] != k - 1 or upper.size != k:
+        raise ValueError("unit must have k-1 columns for a k-part simplex.")
+
+    free_mass = float(target - lower.sum())
+    if free_mass < 0.0:
+        raise ValueError("simplex lower bounds exceed the requested sum.")
+    if np.any(lower + free_mass > upper + 1.0e-12):
+        raise ValueError("stick-breaking requires non-binding simplex upper bounds.")
+
+    extras = np.zeros((unit.shape[0], k), dtype=float)
+    remaining = np.full(unit.shape[0], free_mass, dtype=float)
+    for j in range(k - 1):
+        remaining_parts = k - j - 1
+        u = np.clip(unit[:, j], 0.0, 1.0)
+        fraction = 1.0 - np.power(1.0 - u, 1.0 / remaining_parts)
+        extras[:, j] = remaining * fraction
+        remaining -= extras[:, j]
+    extras[:, -1] = remaining
+    result = lower.reshape(1, -1) + extras
+    # Remove accumulated floating-point residual from the dependent coordinate.
+    result[:, -1] += target - result.sum(axis=1)
+    return result
 
 try:
     import torch
@@ -238,6 +311,175 @@ class GaussianProcess:
         self.dtype = None
         self.device = None
         self.length_scale = None
+        self.external_dim = None
+        self.simplex_indices = None
+        self.external_lower_bounds = None
+        self.external_upper_bounds = None
+
+    def _configure_input_coordinates(self, param_names, lower_bounds, upper_bounds):
+        """Use four independent coordinates for the five horn fractions."""
+        names = list(param_names)
+        lower = np.asarray(lower_bounds, dtype=float).reshape(-1)
+        upper = np.asarray(upper_bounds, dtype=float).reshape(-1)
+        if len(names) != lower.size or lower.shape != upper.shape:
+            raise ValueError("parameter names and bounds must have matching lengths.")
+
+        self.external_dim = len(names)
+        self.external_lower_bounds = lower
+        self.external_upper_bounds = upper
+        if all(name in names for name in HORN_SIMPLEX_NAMES):
+            indices = tuple(names.index(name) for name in HORN_SIMPLEX_NAMES)
+            if indices != tuple(range(indices[0], indices[0] + len(indices))):
+                raise ValueError("horn simplex parameters must be contiguous.")
+            self.simplex_indices = indices
+        else:
+            self.simplex_indices = None
+
+    def _encode_model_inputs(self, values):
+        values = np.asarray(values, dtype=np.float64)
+        was_vector = values.ndim == 1
+        values = values.reshape(1, -1) if was_vector else values
+        if self.external_dim is not None and values.shape[1] != self.external_dim:
+            raise ValueError(
+                f"Expected {self.external_dim} external input columns, got {values.shape[1]}."
+            )
+        if self.simplex_indices is not None:
+            # f_ap is exactly determined by the other four fractions.
+            values = np.delete(values, self.simplex_indices[-1], axis=1)
+        return values.reshape(-1) if was_vector else values
+
+    def _model_input_bounds(self):
+        if self.external_lower_bounds is None or self.external_upper_bounds is None:
+            lower = np.asarray(self.cfg.hfss.lower_bounds, dtype=np.float64)
+            upper = np.asarray(self.cfg.hfss.upper_bounds, dtype=np.float64)
+        else:
+            lower = self.external_lower_bounds.copy()
+            upper = self.external_upper_bounds.copy()
+
+        if self.simplex_indices is not None:
+            frac_lower = lower[list(self.simplex_indices)]
+            frac_upper = upper[list(self.simplex_indices)]
+            feasible_upper = 1.0 - (frac_lower.sum() - frac_lower)
+            upper[list(self.simplex_indices)] = np.minimum(frac_upper, feasible_upper)
+            lower = np.delete(lower, self.simplex_indices[-1])
+            upper = np.delete(upper, self.simplex_indices[-1])
+        return lower, upper
+
+    def project_external_inputs(self, values):
+        """Return inputs on the same feasible simplex used by HFSS."""
+        values = np.asarray(values, dtype=float)
+        was_vector = values.ndim == 1
+        rows = values.reshape(1, -1).copy() if was_vector else values.copy()
+        if self.simplex_indices is not None:
+            idx = list(self.simplex_indices)
+            lower = self.external_lower_bounds[idx]
+            upper = self.external_upper_bounds[idx]
+            for row in rows:
+                row[idx] = _project_to_bounded_simplex(row[idx], lower, upper)
+        return rows.reshape(-1) if was_vector else rows
+
+    def sample_sobol_candidates(
+        self,
+        bounds,
+        n_candidates,
+        rng=None,
+        active_indices=None,
+        fixed_point=None,
+    ):
+        """Generate scrambled Sobol candidates, using four simplex coordinates."""
+        bounds = _as_bounds_array(bounds)
+        d = bounds.shape[0]
+        active = list(range(d)) if active_indices is None else list(active_indices)
+        if rng is None:
+            rng = np.random.default_rng()
+        seed = int(rng.integers(0, np.iinfo(np.uint32).max, dtype=np.uint32))
+
+        full_simplex_active = (
+            self.simplex_indices is not None
+            and all(index in active for index in self.simplex_indices)
+        )
+        simplex_active = set(active).intersection(self.simplex_indices or ())
+        if simplex_active and not full_simplex_active:
+            raise ValueError(
+                "horn section fractions must be optimized together because one is dependent."
+            )
+        simplex_set = set(self.simplex_indices or ()) if full_simplex_active else set()
+        ordinary_active = [index for index in active if index not in simplex_set]
+        sobol_dim = len(ordinary_active) + (len(simplex_set) - 1 if simplex_set else 0)
+        if sobol_dim <= 0:
+            raise ValueError("at least one active design coordinate is required.")
+
+        engine = Sobol(d=sobol_dim, scramble=True, seed=seed)
+        power = int(np.ceil(np.log2(max(1, int(n_candidates)))))
+        unit = engine.random_base2(power)[: int(n_candidates)]
+
+        if len(active) == d:
+            candidates = np.tile(bounds[:, 0], (len(unit), 1))
+        else:
+            if fixed_point is None:
+                raise ValueError("fixed_point is required when active_indices is provided.")
+            candidates = np.tile(np.asarray(fixed_point, dtype=float), (len(unit), 1))
+
+        cursor = 0
+        for index in ordinary_active:
+            candidates[:, index] = (
+                bounds[index, 0]
+                + unit[:, cursor] * (bounds[index, 1] - bounds[index, 0])
+            )
+            cursor += 1
+
+        if simplex_set:
+            idx = list(self.simplex_indices)
+            simplex_unit = unit[:, cursor : cursor + len(idx) - 1]
+            candidates[:, idx] = _bounded_simplex_from_unit(
+                simplex_unit,
+                bounds[idx, 0],
+                bounds[idx, 1],
+            )
+        elif self.simplex_indices is not None:
+            candidates = self.project_external_inputs(candidates)
+        return np.clip(candidates, bounds[:, 0], bounds[:, 1])
+
+    def _optimize_simplex_acquisition_by_sobol(
+        self,
+        acq_name,
+        acq_params,
+        lower_bounds,
+        upper_bounds,
+        active_indices=None,
+        fixed_point=None,
+    ):
+        params = dict(acq_params or {})
+        rng = params.get("rng")
+        if rng is None:
+            rng = np.random.default_rng(params.get("seed"))
+        n_candidates = int(params.get("n_candidates", DEFAULT_SOBOL_CANDIDATES))
+        bounds = np.column_stack([lower_bounds, upper_bounds])
+        candidates = self.sample_sobol_candidates(
+            bounds,
+            n_candidates,
+            rng=rng,
+            active_indices=active_indices,
+            fixed_point=fixed_point,
+        )
+        mu, std = self.predict(candidates, return_std=True)
+        mu = np.asarray(mu, dtype=float).reshape(-1)
+        std = np.asarray(std, dtype=float).reshape(-1)
+
+        if acq_name == "expected_improvement":
+            xi = float(params.get("xi", 0.01))
+            improvement = float(np.min(self.train_Y.detach().cpu().numpy())) - mu - xi
+            safe_std = np.maximum(std, 1.0e-15)
+            z_score = improvement / safe_std
+            values = improvement * norm.cdf(z_score) + safe_std * norm.pdf(z_score)
+            values = np.where(std > 0.0, values, np.maximum(improvement, 0.0))
+            best_idx = int(np.argmax(values))
+            return candidates[best_idx], float(values[best_idx])
+
+        kappa = float(params.get("kappa", 2.0))
+        lcb = mu - kappa * std
+        best_idx = int(np.argmin(lcb))
+        return candidates[best_idx], float(-lcb[best_idx])
 
     def _require_botorch(self) -> None:
         if torch is None or SingleTaskGP is None:
@@ -248,7 +490,7 @@ class GaussianProcess:
     def _to_train_tensors(self, X_sample, y_sample):
         self._require_botorch()
 
-        X_np = np.asarray(X_sample, dtype=np.float64)
+        X_np = self._encode_model_inputs(X_sample)
         y_np = np.asarray(y_sample, dtype=np.float64).reshape(-1, 1)
 
         self.dtype = torch.double
@@ -261,8 +503,7 @@ class GaussianProcess:
 
 
     def _get_input_bounds(self, dims: int):
-        lower = np.asarray(self.cfg.hfss.lower_bounds, dtype=np.float64)
-        upper = np.asarray(self.cfg.hfss.upper_bounds, dtype=np.float64)
+        lower, upper = self._model_input_bounds()
         if len(lower) != dims or len(upper) != dims:
             raise ValueError("Config bounds do not match the training input dimension.")
         bounds = np.vstack([lower, upper])
@@ -339,7 +580,8 @@ class GaussianProcess:
         X_np = np.asarray(X, dtype=np.float64)
         if X_np.ndim == 1:
             X_np = X_np.reshape(1, -1)
-        X_tensor = torch.tensor(X_np, dtype=self.dtype, device=self.device)
+        X_model = self._encode_model_inputs(X_np)
+        X_tensor = torch.tensor(X_model, dtype=self.dtype, device=self.device)
 
         with torch.no_grad():
             posterior = self.model.posterior(X_tensor)
@@ -348,7 +590,7 @@ class GaussianProcess:
 
             if return_cov:
                 cov = posterior.mvn.covariance_matrix.detach().cpu().double().numpy()
-                cov = np.asarray(cov, dtype=float).reshape(X_np.shape[0], X_np.shape[0])
+                cov = np.asarray(cov, dtype=float).reshape(X_model.shape[0], X_model.shape[0])
                 cov = 0.5 * (cov + cov.T)
                 return mu, cov
 
@@ -456,6 +698,7 @@ class GaussianProcess:
     ) -> Tuple[np.ndarray, dict]:
         default_objective_col = getattr(getattr(self.cfg, "objective", None), "name", "Objective")
         objective_col = kwargs.get("objective_col", default_objective_col)
+        self._configure_input_coordinates(param_names, lower_bounds, upper_bounds)
         X_sample = np.asarray([[row[name] for name in param_names] for row in history_data], dtype=float)
         y_sample = np.asarray([[row[objective_col]] for row in history_data], dtype=float)
 
@@ -502,9 +745,9 @@ class GaussianProcess:
                 "rlcbp",
             }
             optimizer = (
-                optimize_robust_lcb_penalty_by_random_search
+                optimize_robust_lcb_penalty_by_sobol_search
                 if acq_name in penalty_names
-                else optimize_robust_lcb_by_random_search
+                else optimize_robust_lcb_by_sobol_search
             )
             optimizer_kwargs = {
                 "gp": self,
@@ -535,6 +778,24 @@ class GaussianProcess:
             return x_new, {"acq": acq_value, "length_scale": self.length_scale, "method": acq_name}
 
         # standard LCB / EI BoTorch path
+        if self.simplex_indices is not None:
+            standard_name = str(params.get("name", acq_name)).lower()
+            if standard_name not in {"expected_improvement", "lower_confidence_bound"}:
+                raise ValueError(f"Unsupported simplex acquisition function: {standard_name}")
+            x_new, acq_value = self._optimize_simplex_acquisition_by_sobol(
+                standard_name,
+                params,
+                lower_bounds,
+                upper_bounds,
+                active_indices=active_indices,
+                fixed_point=fixed_point,
+            )
+            return x_new, {
+                "acq": acq_value,
+                "length_scale": self.length_scale,
+                "method": f"{standard_name}_sobol",
+            }
+
         x_new, acq_value = self.optAcquisition(
             acq_func=acq_func,
             X_sample=X_sample,
@@ -694,6 +955,10 @@ def robust_lcb_on_J(
         M = perturbations.shape[0]
         Z = np.clip(x.reshape(1, -1) + perturbations, bounds[:, 0], bounds[:, 1])
 
+    projector = getattr(gp, "project_external_inputs", None)
+    if callable(projector):
+        Z = projector(Z)
+
     mu_Z, cov_Z = gp.predict(Z, return_cov=True)
     mu_Z = np.asarray(mu_Z, dtype=float).reshape(-1)
     cov_Z = np.asarray(cov_Z, dtype=float).reshape(M, M)
@@ -802,7 +1067,7 @@ def optimize_lcb_by_random_search(
     return X_cand[best_idx], float(values[best_idx])
 
 
-def optimize_robust_lcb_by_random_search(
+def optimize_robust_lcb_by_sobol_search(
     gp,
     Sigma,
     bounds,
@@ -813,7 +1078,7 @@ def optimize_robust_lcb_by_random_search(
     active_indices: Optional[List[int]] = None,
     fixed_point: Optional[np.ndarray] = None,
 ):
-    """Minimize robust LCB on J(x) by random search with common perturbations."""
+    """Minimize robust LCB on J(x) over scrambled Sobol candidates."""
     if rng is None:
         rng = np.random.default_rng()
     Sigma = np.asarray(Sigma, dtype=float)
@@ -823,21 +1088,31 @@ def optimize_robust_lcb_by_random_search(
     if Sigma.shape != (d, d):
         raise ValueError("Sigma must have shape (d, d).")
     if n_candidates is None:
-        n_candidates = max(256, 64 * len(active))
+        n_candidates = DEFAULT_SOBOL_CANDIDATES
 
-    if len(active) == d:
-        X_cand = rng.uniform(bounds[:, 0], bounds[:, 1], size=(int(n_candidates), d))
-    else:
-        if fixed_point is None:
-            raise ValueError("fixed_point is required when active_indices is provided.")
-        fixed_point = np.asarray(fixed_point, dtype=float).reshape(-1)
-        X_cand = np.tile(fixed_point, (int(n_candidates), 1))
-        X_cand[:, active] = rng.uniform(
-            bounds[active, 0],
-            bounds[active, 1],
-            size=(int(n_candidates), len(active)),
+    sampler = getattr(gp, "sample_sobol_candidates", None)
+    if callable(sampler):
+        X_cand = sampler(
+            bounds,
+            n_candidates,
+            rng=rng,
+            active_indices=active_indices,
+            fixed_point=fixed_point,
         )
-        X_cand = np.clip(X_cand, bounds[:, 0], bounds[:, 1])
+    else:
+        seed = int(rng.integers(0, np.iinfo(np.uint32).max, dtype=np.uint32))
+        engine = Sobol(d=len(active), scramble=True, seed=seed)
+        power = int(np.ceil(np.log2(max(1, int(n_candidates)))))
+        unit = engine.random_base2(power)[: int(n_candidates)]
+        if len(active) == d:
+            X_cand = bounds[:, 0] + unit * (bounds[:, 1] - bounds[:, 0])
+        else:
+            if fixed_point is None:
+                raise ValueError("fixed_point is required when active_indices is provided.")
+            X_cand = np.tile(np.asarray(fixed_point, dtype=float), (len(unit), 1))
+            X_cand[:, active] = (
+                bounds[active, 0] + unit * (bounds[active, 1] - bounds[active, 0])
+            )
 
     L_sigma = np.linalg.cholesky(Sigma + 1e-12 * np.eye(d))
     standard_normals = rng.normal(size=(int(n_perturb), d))
@@ -859,7 +1134,7 @@ def optimize_robust_lcb_by_random_search(
     return X_cand[best_idx], float(values[best_idx])
 
 
-def optimize_robust_lcb_penalty_by_random_search(
+def optimize_robust_lcb_penalty_by_sobol_search(
     gp,
     Sigma,
     bounds,
@@ -871,7 +1146,7 @@ def optimize_robust_lcb_penalty_by_random_search(
     active_indices: Optional[List[int]] = None,
     fixed_point: Optional[np.ndarray] = None,
 ):
-    """Minimize robust LCB penalty on J(x) by random search with common perturbations."""
+    """Minimize penalized robust LCB over scrambled Sobol candidates."""
     if rng is None:
         rng = np.random.default_rng()
     Sigma = np.asarray(Sigma, dtype=float)
@@ -881,21 +1156,31 @@ def optimize_robust_lcb_penalty_by_random_search(
     if Sigma.shape != (d, d):
         raise ValueError("Sigma must have shape (d, d).")
     if n_candidates is None:
-        n_candidates = max(256, 64 * len(active))
+        n_candidates = DEFAULT_SOBOL_CANDIDATES
 
-    if len(active) == d:
-        X_cand = rng.uniform(bounds[:, 0], bounds[:, 1], size=(int(n_candidates), d))
-    else:
-        if fixed_point is None:
-            raise ValueError("fixed_point is required when active_indices is provided.")
-        fixed_point = np.asarray(fixed_point, dtype=float).reshape(-1)
-        X_cand = np.tile(fixed_point, (int(n_candidates), 1))
-        X_cand[:, active] = rng.uniform(
-            bounds[active, 0],
-            bounds[active, 1],
-            size=(int(n_candidates), len(active)),
+    sampler = getattr(gp, "sample_sobol_candidates", None)
+    if callable(sampler):
+        X_cand = sampler(
+            bounds,
+            n_candidates,
+            rng=rng,
+            active_indices=active_indices,
+            fixed_point=fixed_point,
         )
-        X_cand = np.clip(X_cand, bounds[:, 0], bounds[:, 1])
+    else:
+        seed = int(rng.integers(0, np.iinfo(np.uint32).max, dtype=np.uint32))
+        engine = Sobol(d=len(active), scramble=True, seed=seed)
+        power = int(np.ceil(np.log2(max(1, int(n_candidates)))))
+        unit = engine.random_base2(power)[: int(n_candidates)]
+        if len(active) == d:
+            X_cand = bounds[:, 0] + unit * (bounds[:, 1] - bounds[:, 0])
+        else:
+            if fixed_point is None:
+                raise ValueError("fixed_point is required when active_indices is provided.")
+            X_cand = np.tile(np.asarray(fixed_point, dtype=float), (len(unit), 1))
+            X_cand[:, active] = (
+                bounds[active, 0] + unit * (bounds[active, 1] - bounds[active, 0])
+            )
 
     L_sigma = np.linalg.cholesky(Sigma + 1e-12 * np.eye(d))
     standard_normals = rng.normal(size=(int(n_perturb), d))
@@ -916,6 +1201,11 @@ def optimize_robust_lcb_penalty_by_random_search(
     ], dtype=float)
     best_idx = int(np.argmin(values))
     return X_cand[best_idx], float(values[best_idx])
+
+
+# Backward-compatible names for callers outside this repository.
+optimize_robust_lcb_by_random_search = optimize_robust_lcb_by_sobol_search
+optimize_robust_lcb_penalty_by_random_search = optimize_robust_lcb_penalty_by_sobol_search
 
 
 def robust_validation_summary(candidates, gp, Sigma, bounds, rng=None, n_perturb=64, eps=1e-12):
@@ -997,3 +1287,4 @@ def negative_log_marginal_likelihood(params, X, y, noise_var):
         return (0.5 * (y.T @ alpha) + 0.5 * log_det_Ky + 0.5 * n * np.log(2 * np.pi)).item()
     except np.linalg.LinAlgError:
         return np.inf
+
