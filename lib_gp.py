@@ -1287,4 +1287,3 @@ def negative_log_marginal_likelihood(params, X, y, noise_var):
         return (0.5 * (y.T @ alpha) + 0.5 * log_det_Ky + 0.5 * n * np.log(2 * np.pi)).item()
     except np.linalg.LinAlgError:
         return np.inf
-
