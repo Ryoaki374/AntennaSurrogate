@@ -20,7 +20,37 @@ from lib_objective import (
 def test_normalize_handles_minimized_negative_db_values():
     assert normalize_objective(-30.0, -30.0, -10.0) == 0.0
     assert normalize_objective(-20.0, -30.0, -10.0) == 0.5
-    assert normalize_objective(-40.0, -30.0, -10.0) == 0.0
+    assert normalize_objective(-40.0, -30.0, -10.0) == -0.5
+
+
+def test_signed_l2_rewards_values_better_than_target_without_clamping():
+    config = SimpleNamespace(
+        p=2.0,
+        aggregation="signed_l2",
+        reward_weight=0.25,
+        terms=[
+            SimpleNamespace(column="bad", weight=1.0, target=0.0, limit=1.0),
+            SimpleNamespace(column="good", weight=1.0, target=0.0, limit=1.0),
+        ],
+    )
+
+    result = calculate_lp_fom({"bad": 2.0, "good": -4.0}, config)
+    assert result == pytest.approx(math.sqrt(2.0) - 0.25 * math.sqrt(8.0))
+
+
+def test_signed_l2_is_zero_at_all_targets_and_one_at_all_limits():
+    config = SimpleNamespace(
+        p=2.0,
+        aggregation="signed_l2",
+        reward_weight=0.25,
+        terms=[
+            SimpleNamespace(column="a", weight=1.0, target=10.0, limit=30.0),
+            SimpleNamespace(column="b", weight=1.0, target=100.0, limit=60.0),
+        ],
+    )
+
+    assert calculate_lp_fom({"a": 10.0, "b": 100.0}, config) == pytest.approx(0.0)
+    assert calculate_lp_fom({"a": 30.0, "b": 60.0}, config) == pytest.approx(1.0)
 
 
 def test_calculate_lp_fom_combines_s11_and_crosspol():
@@ -54,6 +84,8 @@ def test_active_hfss_outputs_match_objective_terms():
     objective_columns = [term["column"] for term in config["objective"]["terms"]]
     assert output_names == ["S11", "Crosspol", "ellipticity", "phasecenter"]
     assert objective_columns == output_names
+    assert config["objective"]["aggregation"] == "signed_l2"
+    assert config["objective"]["reward_weight"] == pytest.approx(0.25)
     assert config["objective"]["terms"] == [
         {"column": "S11", "weight": 1.0, "target": -30.0, "limit": -20.0},
         {"column": "Crosspol", "weight": 1.0, "target": 0.01, "limit": 0.05},
