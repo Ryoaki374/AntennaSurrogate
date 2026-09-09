@@ -21,12 +21,11 @@ class RandomSearch:
         upper: np.ndarray,
         active_indices: Optional[List[int]] = None,
         fixed_point: Optional[np.ndarray] = None,
-        seed: Optional[int] = None,
     ) -> np.ndarray:
         dims = len(lower)
 
         if active_indices is None or len(active_indices) == dims:
-            sampler = LatinHypercube(d=dims, seed=seed)
+            sampler = LatinHypercube(d=dims)
             sample = sampler.random(n=1)
             x_new = scale(sample, lower, upper)[0]
             return self._round_vector(x_new)
@@ -37,7 +36,7 @@ class RandomSearch:
         active = list(active_indices)
         x_new = self._round_vector(np.asarray(fixed_point, dtype=float).copy())
 
-        sampler = LatinHypercube(d=len(active), seed=seed)
+        sampler = LatinHypercube(d=len(active))
         sample = sampler.random(n=1)
         x_new[active] = scale(sample, lower[active], upper[active])[0]
         return self._round_vector(x_new)
@@ -60,13 +59,13 @@ class RandomSearch:
         lower = np.asarray(lower_bounds, dtype=float)
         upper = np.asarray(upper_bounds, dtype=float)
 
-        seed = int(routine_index) if routine_index is not None else len(history_data)
+        # Do not derive a seed from routine_index/history length: both restart for
+        # every repeat and would replay the same post-initialization design points.
         x_new = self._sample_lhs_point(
             lower=lower,
             upper=upper,
             active_indices=active_indices,
             fixed_point=fixed_point,
-            seed=seed,
         )
 
         y_new, row = objective_func(param_names, x_new)
