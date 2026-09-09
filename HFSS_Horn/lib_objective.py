@@ -260,6 +260,12 @@ def _get_field(value, name):
     return getattr(value, name)
 
 
+def _get_optional_field(value, name, default):
+    if isinstance(value, Mapping):
+        return value.get(name, default)
+    return getattr(value, name, default)
+
+
 def replace_nonfinite_objectives(values, objective_config):
     """Replace non-finite objective outputs with their configured limits."""
     terms = _get_field(objective_config, "terms")
@@ -284,7 +290,7 @@ def replace_nonfinite_objectives(values, objective_config):
 
 
 def normalize_objective(value, target, limit):
-    """Map target to zero and limit to one, clamping better values to zero."""
+    """Map target to zero and limit to one without clamping either side."""
     value = float(value)
     target = float(target)
     limit = float(limit)
@@ -292,11 +298,16 @@ def normalize_objective(value, target, limit):
         raise ValueError("objective values, targets, and limits must be finite")
     if target == limit:
         raise ValueError("objective target and limit must differ")
-    return max(0.0, (value - target) / (limit - target))
+    return (value - target) / (limit - target)
 
 
 def calculate_lp_fom(values, objective_config, p=None):
-    """Return one weighted Lp objective from the configured scalar outputs."""
+    """Return the configured weighted objective from scalar outputs.
+
+    ``aggregation = "lp"`` retains the legacy one-sided Lp violation norm.
+    ``aggregation = "signed_l2"`` subtracts a weighted L2 reward for values
+    better than target from the weighted L2 norm of target violations.
+    """
     terms = _get_field(objective_config, "terms")
     values = replace_nonfinite_objectives(values, objective_config)
     if p is None:
@@ -305,7 +316,18 @@ def calculate_lp_fom(values, objective_config, p=None):
     if not math.isfinite(p) or p < 1.0:
         raise ValueError("objective p must be finite and at least one")
 
-    weighted_sum = 0.0
+    aggregation = str(_get_optional_field(objective_config, "aggregation", "lp")).lower()
+    if aggregation not in {"lp", "signed_l2"}:
+        raise ValueError("objective aggregation must be 'lp' or 'signed_l2'")
+    if aggregation == "signed_l2" and p != 2.0:
+        raise ValueError("signed_l2 aggregation requires p=2")
+
+    reward_weight = float(_get_optional_field(objective_config, "reward_weight", 0.25))
+    if not math.isfinite(reward_weight) or reward_weight < 0.0:
+        raise ValueError("objective reward_weight must be finite and non-negative")
+
+    weighted_bad = 0.0
+    weighted_good = 0.0
     weight_sum = 0.0
     for term in terms:
         column = _get_field(term, "column")
@@ -315,10 +337,19 @@ def calculate_lp_fom(values, objective_config, p=None):
         normalized = normalize_objective(
             values[column], _get_field(term, "target"), _get_field(term, "limit")
         )
-        weighted_sum += weight * normalized ** p
+        bad = max(normalized, 0.0)
+        weighted_bad += weight * bad ** p
+        if aggregation == "signed_l2":
+            good = max(-normalized, 0.0)
+            weighted_good += weight * good ** 2
         weight_sum += weight
 
     if weight_sum <= 0.0:
         raise ValueError("sum of objective weights must be greater than zero")
-    return (weighted_sum / weight_sum) ** (1.0 / p)
+    bad_lp = (weighted_bad / weight_sum) ** (1.0 / p)
+    if aggregation == "lp":
+        return bad_lp
+
+    good_l2 = math.sqrt(weighted_good / weight_sum)
+    return bad_lp - reward_weight * good_l2
 
