@@ -47,6 +47,8 @@
 [objective]
     name = "Objective"
     p = 2.0
+    aggregation = "signed_l2"
+    reward_weight = 0.25
 
     [[objective.terms]]
     column = "S11"

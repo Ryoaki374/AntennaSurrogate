@@ -111,6 +111,8 @@ class ObjectiveTermConfig:
 class ObjectiveConfig:
     name: str = "Objective"
     p: float = 2.0
+    aggregation: str = "lp"
+    reward_weight: float = 0.25
     terms: List[ObjectiveTermConfig] = dataclasses.field(default_factory=list)
 
 
