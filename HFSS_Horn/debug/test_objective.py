@@ -116,6 +116,16 @@ def test_subprocess_exports_rel3x_instead_of_hfss_beam_width():
     assert "ELLIPTICITY_NAN_MODEL_FILENAME" not in source
 
 
+def test_subprocess_uses_dedicated_crosspol_grid_and_shared_frequency_sweep():
+    subprocess_path = Path(__file__).resolve().parents[1] / "subprocess.py"
+    source = subprocess_path.read_text(encoding="utf-8")
+    assert '["Context:=", CROSSPOL_FAR_FIELD_SETUP]' in source
+    assert '"ThetaStart:=", "-15deg"' in source
+    assert '"ThetaStop:=", "15deg"' in source
+    assert '"ThetaStep:=", "0.5deg"' in source
+    assert source.count("numeric_values(80.0, 175.0, 5.0)") == 2
+
+
 def test_read_temp_output_calculates_phase_center_frequency_stability(tmp_path):
     real_export = tmp_path / "phase_center.csv"
     imag_export = tmp_path / "phase_center_imag.csv"
