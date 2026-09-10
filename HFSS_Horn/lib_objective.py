@@ -5,12 +5,20 @@ import os
 import re
 from collections.abc import Mapping
 
+import numpy as np
+from scipy.interpolate import RegularGridInterpolator
+from scipy.optimize import curve_fit
+
 
 SPEED_OF_LIGHT = 299792458.0
 PHASE_CENTER_THETA_LIMIT_DEG = 10.0
 PHASE_CENTER_Z_MIN_M = -10.0e-3
 PHASE_CENTER_Z_MAX_M = 10.0e-3
 PHASE_CENTER_Z_SAMPLES = 1001
+ELLIPTICITY_F_NUMBER = 3.0
+ELLIPTICITY_PUPIL_SAMPLES = 129
+ELLIPTICITY_FFT_SIZE = 1024
+ELLIPTICITY_FIT_THRESHOLD = 0.1
 
 
 def _phase_center_imag_path(real_path):
@@ -142,88 +150,245 @@ def _population_std(values):
     return math.sqrt(sum((value - mean_value) ** 2 for value in values) / len(values))
 
 
-def _ellipticities_from_rows(rows):
-    """Return per-frequency ellipticities, preserving non-finite samples."""
-    headers = [header.strip().lower() for header in rows[0]]
-    phi_index = next(
-        (
-            index
-            for index, header in enumerate(headers)
-            if re.match(r"^phi(?:\s*\[|$)", header)
+def load_rel3x_csv(csv_path):
+    """Load the quarter-plane complex rEL3X grid for each frequency."""
+    with open(csv_path, newline="", encoding="utf-8-sig") as csv_file:
+        reader = csv.reader(csv_file)
+        try:
+            headers = [header.strip().lower() for header in next(reader)]
+        except StopIteration as error:
+            raise ValueError("rEL3X CSV must contain a header") from error
+
+        def find_column(prefix):
+            return next(
+                (
+                    index
+                    for index, header in enumerate(headers)
+                    if header.startswith(prefix)
+                ),
+                None,
+            )
+
+        frequency_index = find_column("freq")
+        theta_index = find_column("theta")
+        phi_index = find_column("phi")
+        real_index = find_column("re(rel3x)")
+        imag_index = find_column("im(rel3x)")
+        required = (frequency_index, theta_index, phi_index, real_index, imag_index)
+        if any(index is None for index in required):
+            raise ValueError(
+                "rEL3X CSV is missing a required frequency, angle, or field column"
+            )
+
+        samples_by_frequency = {}
+        for row in reader:
+            if not row:
+                continue
+            if len(row) <= max(required):
+                raise ValueError("rEL3X CSV data row has fewer columns than its header")
+            frequency_ghz = float(row[frequency_index])
+            theta_deg = float(row[theta_index])
+            phi_deg = float(row[phi_index])
+            field = complex(float(row[real_index]), float(row[imag_index]))
+            samples_by_frequency.setdefault(frequency_ghz, {})[
+                (theta_deg, phi_deg)
+            ] = field
+
+    rel3x_by_frequency = {}
+    for frequency_ghz in sorted(samples_by_frequency):
+        samples = samples_by_frequency[frequency_ghz]
+        theta_deg = np.array(sorted({point[0] for point in samples}), dtype=float)
+        phi_deg = np.array(sorted({point[1] for point in samples}), dtype=float)
+        expected_count = len(theta_deg) * len(phi_deg)
+        if len(samples) != expected_count:
+            raise ValueError(
+                "rEL3X angular grid is incomplete at {:g} GHz".format(frequency_ghz)
+            )
+        rel3x_quarter = np.empty((len(theta_deg), len(phi_deg)), dtype=complex)
+        for theta_position, theta_value in enumerate(theta_deg):
+            for phi_position, phi_value in enumerate(phi_deg):
+                rel3x_quarter[theta_position, phi_position] = samples[
+                    (theta_value, phi_value)
+                ]
+        rel3x_by_frequency[frequency_ghz] = (
+            theta_deg,
+            phi_deg,
+            rel3x_quarter,
+        )
+    if not rel3x_by_frequency:
+        raise ValueError("rEL3X CSV contains no field samples")
+    return rel3x_by_frequency
+
+
+def quarter_rel3x_to_pupil(
+    theta_deg,
+    phi_deg,
+    rel3x_quarter,
+    f_number=ELLIPTICITY_F_NUMBER,
+    pupil_samples=ELLIPTICITY_PUPIL_SAMPLES,
+):
+    """Mirror the quarter-plane field and truncate it at the F-number stop."""
+    pupil_axis = np.linspace(-1.0, 1.0, pupil_samples)
+    pupil_x, pupil_y = np.meshgrid(pupil_axis, pupil_axis, indexing="xy")
+    pupil_radius = np.hypot(pupil_x, pupil_y)
+    theta_query_deg = np.degrees(np.arctan(pupil_radius / (2.0 * f_number)))
+    phi_query_deg = np.degrees(np.arctan2(np.abs(pupil_y), np.abs(pupil_x)))
+
+    interpolator = RegularGridInterpolator(
+        (theta_deg, phi_deg),
+        rel3x_quarter,
+        bounds_error=False,
+        fill_value=0.0,
+    )
+    query_points = np.column_stack(
+        (theta_query_deg.ravel(), phi_query_deg.ravel())
+    )
+    pupil_field = interpolator(query_points).reshape(pupil_x.shape)
+    pupil_field[pupil_radius > 1.0] = 0.0
+    return pupil_axis, pupil_field
+
+
+def pupil_to_beam(pupil_axis, pupil_field, fft_size=ELLIPTICITY_FFT_SIZE):
+    """Return normalized beam power from a zero-padded 2D pupil FFT."""
+    pupil_samples = pupil_field.shape[0]
+    if pupil_field.shape != (pupil_samples, pupil_samples):
+        raise ValueError("pupil field must be square")
+    if fft_size < pupil_samples:
+        raise ValueError("FFT size must be at least the pupil sample count")
+
+    padded = np.zeros((fft_size, fft_size), dtype=complex)
+    start = fft_size // 2 - pupil_samples // 2
+    padded[start:start + pupil_samples, start:start + pupil_samples] = pupil_field
+    beam_field = np.fft.fftshift(np.fft.fft2(np.fft.ifftshift(padded)))
+    beam_power = np.abs(beam_field) ** 2
+    peak_power = beam_power.max()
+    if not np.isfinite(peak_power) or peak_power <= 0.0:
+        return np.array([], dtype=float), np.full_like(beam_power, np.nan, dtype=float)
+    beam_power /= peak_power
+
+    d_rho = pupil_axis[1] - pupil_axis[0]
+    spatial_frequency = np.fft.fftshift(np.fft.fftfreq(fft_size, d=d_rho))
+    beam_axis = 2.0 * spatial_frequency
+    return beam_axis, beam_power
+
+
+def _fwhm_1d(axis, profile):
+    """Estimate one profile width for the Gaussian fit initial parameters."""
+    peak_index = int(np.argmax(profile))
+    half_power = 0.5 * profile[peak_index]
+    left_candidates = np.where(profile[:peak_index] < half_power)[0]
+    right_candidates = np.where(profile[peak_index:] < half_power)[0]
+    if not len(left_candidates) or not len(right_candidates):
+        raise ValueError("beam profile does not cross half power on both sides")
+    left_index = left_candidates[-1]
+    right_index = peak_index + right_candidates[0]
+    left_crossing = np.interp(
+        half_power,
+        profile[left_index:left_index + 2],
+        axis[left_index:left_index + 2],
+    )
+    right_crossing = np.interp(
+        half_power,
+        profile[right_index - 1:right_index + 1][::-1],
+        axis[right_index - 1:right_index + 1][::-1],
+    )
+    return right_crossing - left_crossing
+
+
+def rotated_gaussian(coordinates, amplitude, x0, y0, sigma_x, sigma_y, angle, offset):
+    x, y = coordinates
+    cos_angle = np.cos(angle)
+    sin_angle = np.sin(angle)
+    x_rot = cos_angle * (x - x0) + sin_angle * (y - y0)
+    y_rot = -sin_angle * (x - x0) + cos_angle * (y - y0)
+    return offset + amplitude * np.exp(
+        -0.5 * ((x_rot / sigma_x) ** 2 + (y_rot / sigma_y) ** 2)
+    )
+
+
+def ellipticity_from_2d_gaussian(
+    beam_axis,
+    beam_power,
+    fit_threshold=ELLIPTICITY_FIT_THRESHOLD,
+):
+    """Fit the main beam and return (major-minor)/(major+minor)."""
+    beam_x, beam_y = np.meshgrid(beam_axis, beam_axis, indexing="xy")
+    fit_mask = np.isfinite(beam_power) & (beam_power >= fit_threshold)
+    if np.count_nonzero(fit_mask) < 7:
+        return math.nan
+
+    x_data = beam_x[fit_mask]
+    y_data = beam_y[fit_mask]
+    power_data = beam_power[fit_mask]
+    peak_y, peak_x = np.unravel_index(np.nanargmax(beam_power), beam_power.shape)
+    sigma_to_fwhm = 2.0 * np.sqrt(2.0 * np.log(2.0))
+    initial_parameters = (
+        1.0,
+        beam_axis[peak_x],
+        beam_axis[peak_y],
+        _fwhm_1d(beam_axis, beam_power[peak_y, :]) / sigma_to_fwhm,
+        _fwhm_1d(beam_axis, beam_power[:, peak_x]) / sigma_to_fwhm,
+        0.0,
+        0.0,
+    )
+    parameters, _ = curve_fit(
+        rotated_gaussian,
+        (x_data, y_data),
+        power_data,
+        p0=initial_parameters,
+        bounds=(
+            (0.0, beam_axis.min(), beam_axis.min(), 1.0e-6, 1.0e-6, -np.pi / 2.0, -0.2),
+            (2.0, beam_axis.max(), beam_axis.max(), np.inf, np.inf, np.pi / 2.0, 0.2),
         ),
-        None,
+        maxfev=50000,
     )
-    frequency_index = next(
-        (index for index, header in enumerate(headers) if header.startswith("freq")),
-        None,
-    )
+    sigma_x, sigma_y = parameters[3], parameters[4]
+    major = max(sigma_x, sigma_y)
+    minor = min(sigma_x, sigma_y)
+    return float((major - minor) / (major + minor))
 
-    # HFSS normally exports the report in long form:
-    # Phi [deg], Freq [GHz], XWidthAtYVal(...) [deg].
-    if phi_index is not None and frequency_index is not None:
-        value_index = len(headers) - 1
-        widths_by_frequency = {}
-        invalid_frequencies = set()
-        for row in rows[1:]:
-            if len(row) <= max(phi_index, frequency_index, value_index):
-                continue
-            frequency = float(row[frequency_index])
-            phi = float(row[phi_index])
-            width = float(row[value_index])
-            if not math.isfinite(frequency) or not math.isfinite(phi):
-                return [math.nan]
-            if not math.isfinite(width):
-                invalid_frequencies.add(frequency)
-                continue
-            if abs(phi) <= 1.0e-10:
-                phi_key = 0
-            elif abs(phi - 90.0) <= 1.0e-10:
-                phi_key = 90
-            else:
-                continue
-            widths_by_frequency.setdefault(frequency, {})[phi_key] = width
 
-        if invalid_frequencies:
-            return [math.nan]
-
-        ellipticities = []
-        for frequency in sorted(widths_by_frequency):
-            widths = widths_by_frequency[frequency]
-            if 0 not in widths or 90 not in widths:
-                continue
-            denominator = widths[90] + widths[0]
-            if denominator == 0:
-                raise ValueError(
-                    "ellipticity is undefined when Phi=0 and Phi=90 widths sum to zero"
-                )
-            ellipticities.append((widths[90] - widths[0]) / denominator)
-        return ellipticities
-
-    # Retain support for the earlier wide test/export format:
-    # Freq, Phi=0 width, Phi=90 width.
-    ellipticities = []
-    for row in rows[1:]:
-        phi_0, phi_90 = float(row[1]), float(row[2])
-        if not math.isfinite(phi_0) or not math.isfinite(phi_90):
-            return [math.nan]
-        denominator = phi_90 + phi_0
-        if denominator == 0:
-            raise ValueError("ellipticity is undefined when Phi=0 and Phi=90 widths sum to zero")
-        ellipticities.append((phi_90 - phi_0) / denominator)
-    return ellipticities
+def calculate_beam_ellipticities(csv_path):
+    """Return the fitted FFT beam ellipticity at every exported frequency."""
+    results = {}
+    for frequency_ghz, field_data in load_rel3x_csv(csv_path).items():
+        theta_deg, phi_deg, rel3x_quarter = field_data
+        pupil_axis, pupil_field = quarter_rel3x_to_pupil(
+            theta_deg,
+            phi_deg,
+            rel3x_quarter,
+        )
+        beam_axis, beam_power = pupil_to_beam(pupil_axis, pupil_field)
+        if beam_axis.size == 0:
+            results[frequency_ghz] = math.nan
+        else:
+            results[frequency_ghz] = ellipticity_from_2d_gaussian(
+                beam_axis,
+                beam_power,
+            )
+    return results
 
 
 def read_temp_output(csv_path, output_name):
     """Reduce an HFSS CSV export to the scalar used by the optimizer.
 
     S11 uses the worst (maximum) in-band dB value. Crosspol uses its band
-    average. The ellipticity report contains frequency followed by the Phi=0
-    and Phi=90 half-power beam widths; its per-frequency ellipticity is
-    (Phi90 - Phi0) / (Phi90 + Phi0), reduced to the population standard
-    deviation over frequency. The phase-center report contains the best z at
-    each frequency and likewise reduces to the population standard deviation
-    of z over frequency.
+    average. Ellipticity is calculated at each frequency by applying the F#
+    pupil stop to complex rEL3X, taking its 2D FFT, and fitting the normalized
+    main beam with a rotated 2D Gaussian. Those frequency values are reduced
+    to their population standard deviation. The phase-center report contains
+    the best z at each frequency and is reduced in the same way.
     """
+    if output_name == "ellipticity":
+        ellipticities_by_frequency = calculate_beam_ellipticities(csv_path)
+        ellipticities = [
+            ellipticities_by_frequency[frequency]
+            for frequency in sorted(ellipticities_by_frequency)
+        ]
+        if not ellipticities:
+            raise ValueError("ellipticity CSV contains no frequency samples")
+        return _population_std(ellipticities)
+
     with open(csv_path, newline="", encoding="utf-8-sig") as csv_file:
         rows = list(csv.reader(csv_file))
     if len(rows) < 2:
@@ -243,15 +408,7 @@ def read_temp_output(csv_path, output_name):
             return max(values)
         return sum(values) / len(values)
 
-    if output_name != "ellipticity":
-        raise ValueError("unsupported HFSS output: {}".format(output_name))
-
-    if len(rows[0]) < 3:
-        raise ValueError("ellipticity CSV must contain frequency, Phi=0, and Phi=90 columns")
-    ellipticities = _ellipticities_from_rows(rows)
-    if not ellipticities:
-        raise ValueError("ellipticity CSV contains no complete finite frequency samples")
-    return _population_std(ellipticities)
+    raise ValueError("unsupported HFSS output: {}".format(output_name))
 
 
 def _get_field(value, name):
@@ -267,7 +424,7 @@ def _get_optional_field(value, name, default):
 
 
 def replace_nonfinite_objectives(values, objective_config):
-    """Replace non-finite objective outputs with their configured limits."""
+    """Replace NaN final objective outputs with their configured limits."""
     terms = _get_field(objective_config, "terms")
     limits = {
         _get_field(term, "column"): float(_get_field(term, "limit"))
@@ -285,7 +442,7 @@ def replace_nonfinite_objectives(values, objective_config):
     replaced = {}
     for column, value in values.items():
         numeric_value = float(value)
-        replaced[column] = numeric_value if math.isfinite(numeric_value) else limits[column]
+        replaced[column] = limits[column] if math.isnan(numeric_value) else numeric_value
     return replaced
 
 

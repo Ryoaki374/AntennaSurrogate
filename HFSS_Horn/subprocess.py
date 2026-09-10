@@ -4,7 +4,6 @@ import json
 import itertools
 import math
 import csv
-import shutil
 
 import ScriptEnv
 
@@ -12,6 +11,7 @@ import ScriptEnv
 # Keep these numerical helpers in this file because HFSS IronPython does not
 # reliably import the adjacent lib_hfss_metrics module.
 C0 = 299792458.0
+ELLIPTICITY_FAR_FIELD_SETUP = "Ellipticity Sphere1"
 
 
 def numeric_values(start, stop, step):
@@ -190,8 +190,6 @@ ScriptEnv.Initialize("Ansoft.ElectronicsDesktop")
 LOG_PATH = r"T:\RAkizawa\HFSS_Horn\src\output_log.log"
 CONFIG_PATH = r'T:\RAkizawa\HFSS_Horn\src\_config_HFSS.json'
 TOTAL_LENGTH_FILENAME = '.total_length'
-ELLIPTICITY_NAN_MODEL_FILENAME = 'Horn_ellipticity_nan.step'
-ELLIPTICITY_NAN_CANDIDATE_FILENAME = '.Horn_ellipticity_nan_candidate.step'
 SCRIPT_START_TIME = time.time()
 
 # --- parameter definition ---
@@ -288,18 +286,6 @@ REPORT_SPECS = [
         ],
         "y_component": "db(max(mag(S(Port1:1,Port1:1))))",
     },
-    {
-        "output_name": "ellipticity",
-        "report_name": "Ellipticity_Export_Report",
-        "category": "Far Fields",
-        "context": ["Context:=", "Infinite Sphere1"],
-        "families": [
-            "Theta:=", ["All"],
-            "Freq:=", ["All"],
-            "Phi:=", ["0deg", "90deg"],
-        ],
-        "y_component": "XWidthAtYVal(GainTotal/PeakGain, 0.5)",
-    },
 ]
 
 PHASE_REPORT_SPECS = [
@@ -316,20 +302,9 @@ PHASE_REPORT_SPECS = [
 ]
 
 
-def _last_column_has_nan(csv_path):
-    """Return whether an HFSS CSV contains NaN in its reported value column."""
-    with open(csv_path, "r") as csv_file:
-        rows = list(csv.reader(csv_file))
-    for row in rows[1:]:
-        if row and math.isnan(float(row[-1])):
-            return True
-    return False
-
-
 def export_reports():
-    """Create reports and return whether ellipticity contains any NaN."""
+    """Create and export the configured native HFSS reports."""
     existing_reports = oReportModule.GetAllReportNames()
-    ellipticity_has_nan = False
     for report in REPORT_SPECS:
         output_path = temp_output_paths.get(report["output_name"])
         if not output_path:
@@ -368,36 +343,6 @@ def export_reports():
                 report_name, os.path.getsize(output_path), output_path
             )
         )
-        if report["output_name"] == "ellipticity":
-            ellipticity_has_nan = _last_column_has_nan(output_path)
-            if ellipticity_has_nan:
-                printlog("[State] Ellipticity output contains NaN frequency samples.")
-    return ellipticity_has_nan
-
-
-def _stage_ellipticity_nan_model(model_path):
-    """Stage a model copy unless the first NaN-producing model already exists."""
-    saved_path = os.path.join(WATCH_DIR, ELLIPTICITY_NAN_MODEL_FILENAME)
-    if os.path.exists(saved_path):
-        return None
-    candidate_path = os.path.join(WATCH_DIR, ELLIPTICITY_NAN_CANDIDATE_FILENAME)
-    if os.path.exists(candidate_path):
-        os.remove(candidate_path)
-    shutil.copy2(model_path, candidate_path)
-    return candidate_path
-
-
-def _finish_ellipticity_nan_model(candidate_path, has_nan):
-    """Keep the staged model only when this is the first NaN-producing shape."""
-    if not candidate_path or not os.path.exists(candidate_path):
-        return
-    if has_nan:
-        saved_path = os.path.join(WATCH_DIR, ELLIPTICITY_NAN_MODEL_FILENAME)
-        if not os.path.exists(saved_path):
-            os.rename(candidate_path, saved_path)
-            printlog("[State] Preserved first ellipticity-NaN model: {}".format(saved_path))
-            return
-    os.remove(candidate_path)
 
 
 def _write_rows(output_path, header, rows):
@@ -429,6 +374,134 @@ def _find_name_case_insensitive(names, requested):
         if str(name).lower() == requested_lower:
             return str(name)
     raise RuntimeError("Sweep '{}' was not returned".format(requested))
+
+
+def export_ellipticity_field():
+    """Export complex rEL3X samples used for FFT beam ellipticity fitting."""
+    output_path = temp_output_paths.get("ellipticity")
+    if not output_path:
+        printlog("[State] Skipping unconfigured output: ellipticity")
+        return
+
+    partial_path = output_path + ".partial"
+    if os.path.exists(partial_path):
+        os.remove(partial_path)
+
+    frequency_values = numeric_values(85.0, 175.0, 2.0)
+    try:
+        with open(partial_path, "wb") as csv_file:
+            writer = csv.writer(csv_file)
+            writer.writerow([
+                "Freq [GHz]",
+                "Theta [deg]",
+                "Phi [deg]",
+                "re(rEL3X) [V]",
+                "im(rEL3X) [V]",
+            ])
+
+            for index, frequency_ghz in enumerate(frequency_values, 1):
+                frequency = "{:g}GHz".format(frequency_ghz)
+                result_array = oReportModule.GetSolutionDataPerVariation(
+                    "Far Fields",
+                    "Setup1 : Sweep",
+                    ["Context:=", ELLIPTICITY_FAR_FIELD_SETUP],
+                    [
+                        "Theta:=", ["All"],
+                        "Phi:=", ["All"],
+                        "Freq:=", [frequency],
+                    ],
+                    ["rEL3X"],
+                )
+                if result_array is None or len(result_array) != 1:
+                    raise RuntimeError(
+                        "Unexpected rEL3X result count at {}".format(frequency)
+                    )
+
+                data = result_array[0]
+                try:
+                    sweep_order = [str(name) for name in list(data.GetSweepNames())]
+                    sweep_order.reverse()
+                    theta_name = _find_name_case_insensitive(sweep_order, "Theta")
+                    phi_name = _find_name_case_insensitive(sweep_order, "Phi")
+                    frequency_name = _find_name_case_insensitive(sweep_order, "Freq")
+
+                    sweep_values = {}
+                    sweep_units = {}
+                    for sweep_name in sweep_order:
+                        sweep_values[sweep_name] = unique_sorted(
+                            data.GetSweepValues(sweep_name, False)
+                        )
+                        sweep_units[sweep_name] = str(
+                            data.GetSweepUnits(sweep_name)
+                        ).lower()
+
+                    dimensions = [sweep_values[name] for name in sweep_order]
+                    expected_count = 1
+                    for dimension in dimensions:
+                        expected_count *= len(dimension)
+
+                    real_values = [
+                        float(value)
+                        for value in data.GetRealDataValues("rEL3X", False)
+                    ]
+                    imag_values = [
+                        float(value)
+                        for value in data.GetImagDataValues("rEL3X", False)
+                    ]
+                    if len(real_values) != expected_count or len(imag_values) != expected_count:
+                        raise RuntimeError(
+                            "rEL3X returned an unexpected value count at {}".format(
+                                frequency
+                            )
+                        )
+
+                    for flat_index, coordinates in enumerate(
+                        itertools.product(*dimensions)
+                    ):
+                        point = dict(zip(sweep_order, coordinates))
+                        returned_frequency = float(point[frequency_name])
+                        theta_deg = float(point[theta_name])
+                        phi_deg = float(point[phi_name])
+
+                        frequency_unit = sweep_units[frequency_name]
+                        if frequency_unit == "hz":
+                            returned_frequency /= 1.0e9
+                        elif frequency_unit == "khz":
+                            returned_frequency /= 1.0e6
+                        elif frequency_unit == "mhz":
+                            returned_frequency /= 1.0e3
+                        if "rad" in sweep_units[theta_name]:
+                            theta_deg = math.degrees(theta_deg)
+                        if "rad" in sweep_units[phi_name]:
+                            phi_deg = math.degrees(phi_deg)
+
+                        writer.writerow([
+                            returned_frequency,
+                            theta_deg,
+                            phi_deg,
+                            real_values[flat_index],
+                            imag_values[flat_index],
+                        ])
+                finally:
+                    try:
+                        data.ReleaseData()
+                    except Exception:
+                        pass
+
+                printlog(
+                    "[Ellipticity {}/{}] Exported rEL3X at {}".format(
+                        index, len(frequency_values), frequency
+                    )
+                )
+
+        if os.path.exists(output_path):
+            os.remove(output_path)
+        os.rename(partial_path, output_path)
+        printlog("[State] Exported ellipticity rEL3X field to: {}".format(output_path))
+    except Exception:
+        if os.path.exists(partial_path):
+            os.remove(partial_path)
+        raise
 
 
 def _get_far_field_grid(frequency, theta_values, phi_values):
@@ -622,7 +695,6 @@ def read_total_length_mm(total_length_path):
 #'''
 def runSimulation():
     oRadFieldModule = None
-    nan_model_candidate = None
     try:
             if os.path.exists(RESULT_READY_FILE):
                 os.remove(RESULT_READY_FILE)
@@ -848,13 +920,34 @@ def runSimulation():
                     "PhiStep:=", "1deg",
                     "UseLocalCS:=", False,
                 ])
+            if ELLIPTICITY_FAR_FIELD_SETUP in oRadFieldModule.GetChildNames():
+                printlog(
+                    "[State] Deleting existing far-field setup: {}".format(
+                        ELLIPTICITY_FAR_FIELD_SETUP
+                    )
+                )
+                oRadFieldModule.DeleteSetup([ELLIPTICITY_FAR_FIELD_SETUP])
+            oRadFieldModule.InsertInfiniteSphereSetup(
+                [
+                    "NAME:" + ELLIPTICITY_FAR_FIELD_SETUP,
+                    "UseCustomRadiationSurface:=", False,
+                    "CSDefinition:=", "Theta-Phi",
+                    "Polarization:=", "Linear",
+                    "ThetaStart:=", "0deg",
+                    "ThetaStop:=", "9.5deg",
+                    "ThetaStep:=", "0.1deg",
+                    "PhiStart:=", "0deg",
+                    "PhiStop:=", "90deg",
+                    "PhiStep:=", "1deg",
+                    "UseLocalCS:=", False,
+                ]
+            )
 
             oProject.Save()
 
             # remove imported models
             if os.path.exists(MODEL_FILE[0]):
                 try:
-                    nan_model_candidate = _stage_ellipticity_nan_model(MODEL_FILE[0])
                     os.remove(MODEL_FILE[0])
                 except:
                     printlog("[ERROR] Could not delete input file.")
@@ -876,9 +969,8 @@ def runSimulation():
             # setup
             oReportModule = oDesign.GetModule("ReportSetup")
 
-            ellipticity_has_nan = export_reports()
-            _finish_ellipticity_nan_model(nan_model_candidate, ellipticity_has_nan)
-            nan_model_candidate = None
+            export_reports()
+            export_ellipticity_field()
             export_phasecenter()
             export_crosspol()
             publish_result_ready()
@@ -887,11 +979,6 @@ def runSimulation():
         printlog("[ERROR] HFSS simulation: {}".format(e))
 
     finally:
-            if nan_model_candidate and os.path.exists(nan_model_candidate):
-                try:
-                    os.remove(nan_model_candidate)
-                except OSError as cleanup_e:
-                    printlog("[ERROR] Could not remove staged NaN model: {}".format(cleanup_e))
             # --- 5. Clean up HFSS project for the next run ---
             printlog("[State] Cleaning up a current HFSS simulation...")
             try:
@@ -906,7 +993,9 @@ def runSimulation():
                         oReportModule.DeleteReports(reports_to_delete)
 
                     if oRadFieldModule:
-                        oRadFieldModule.DeleteSetup(["Infinite Sphere1"])
+                        oRadFieldModule.DeleteSetup(
+                            ["Infinite Sphere1", ELLIPTICITY_FAR_FIELD_SETUP]
+                        )
 
                     oDesign.DeleteFullVariation("All", False)
 
