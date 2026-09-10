@@ -5,15 +5,22 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import lib_objective
 from lib_objective import (
     SPEED_OF_LIGHT,
     calculate_lp_fom,
+    ellipticity_from_2d_gaussian,
+    load_rel3x_csv,
     normalize_objective,
+    pupil_to_beam,
+    quarter_rel3x_to_pupil,
     read_temp_output,
     replace_nonfinite_objectives,
+    rotated_gaussian,
 )
 
 
@@ -97,7 +104,16 @@ def test_active_hfss_outputs_match_objective_terms():
 def test_subprocess_uses_hfss_native_max_for_s11():
     subprocess_path = Path(__file__).resolve().parents[1] / "subprocess.py"
     source = subprocess_path.read_text(encoding="utf-8")
-    assert '"y_component": "db(max(mag(S(Port1,Port1))))"' in source
+    assert '"y_component": "db(max(mag(S(Port1:1,Port1:1))))"' in source
+
+
+def test_subprocess_exports_rel3x_instead_of_hfss_beam_width():
+    subprocess_path = Path(__file__).resolve().parents[1] / "subprocess.py"
+    source = subprocess_path.read_text(encoding="utf-8")
+    assert 'GetRealDataValues("rEL3X", False)' in source
+    assert 'GetImagDataValues("rEL3X", False)' in source
+    assert "XWidthAtYVal" not in source
+    assert "ELLIPTICITY_NAN_MODEL_FILENAME" not in source
 
 
 def test_read_temp_output_calculates_phase_center_frequency_stability(tmp_path):
@@ -175,33 +191,80 @@ def test_read_temp_output_uses_crosspol_band_average(tmp_path):
     assert read_temp_output(export, "Crosspol") == pytest.approx(0.05)
 
 
-def test_read_temp_output_calculates_ellipticity_frequency_stability(tmp_path):
-    export = tmp_path / "ellipticity.csv"
+def test_load_rel3x_csv_builds_complex_frequency_grids(tmp_path):
+    export = tmp_path / "rel3x.csv"
     export.write_text(
-        '"Freq [GHz]","width - Phi=0","width - Phi=90"\n'
-        "80,20,30\n"
-        "81,30,30\n"
-        "82,30,30\n",
+        '"Freq [GHz]","Theta [deg]","Phi [deg]","re(rEL3X) [V]","im(rEL3X) [V]"\n'
+        "85,0,0,1,2\n"
+        "85,0,90,3,4\n"
+        "85,1,0,5,6\n"
+        "85,1,90,7,8\n",
         encoding="utf-8",
     )
 
-    assert read_temp_output(export, "ellipticity") == pytest.approx(math.sqrt(2.0) / 15.0)
-
-
-def test_nan_ellipticity_is_replaced_by_its_configured_limit(tmp_path):
-    export = tmp_path / "ellipticity.csv"
-    export.write_text(
-        '"Phi [deg]","Freq [GHz]","XWidthAtYVal(GainTotal/PeakGain, 0.5) [deg]"\n'
-        "0,80,20\n"
-        "0,81,nan\n"
-        "0,82,20\n"
-        "90,80,30\n"
-        "90,81,40\n"
-        "90,82,20\n",
-        encoding="utf-8",
+    theta, phi, field = load_rel3x_csv(export)[85.0]
+    assert theta.tolist() == [0.0, 1.0]
+    assert phi.tolist() == [0.0, 90.0]
+    np.testing.assert_array_equal(
+        field,
+        np.array([[1 + 2j, 3 + 4j], [5 + 6j, 7 + 8j]]),
     )
 
-    raw_outputs = {"ellipticity": read_temp_output(export, "ellipticity")}
+
+def test_2d_gaussian_fit_returns_beam_ellipticity():
+    beam_axis = np.linspace(-4.0, 4.0, 161)
+    beam_x, beam_y = np.meshgrid(beam_axis, beam_axis, indexing="xy")
+    beam_power = rotated_gaussian(
+        (beam_x, beam_y),
+        1.0,
+        0.15,
+        -0.2,
+        1.2,
+        0.8,
+        0.35,
+        0.0,
+    )
+
+    assert ellipticity_from_2d_gaussian(beam_axis, beam_power) == pytest.approx(0.2)
+
+
+def test_circular_pupil_field_produces_circular_fitted_beam():
+    theta = np.linspace(0.0, 9.5, 20)
+    phi = np.linspace(0.0, 90.0, 19)
+    field = np.ones((len(theta), len(phi)), dtype=complex)
+    pupil_axis, pupil_field = quarter_rel3x_to_pupil(
+        theta,
+        phi,
+        field,
+        pupil_samples=65,
+    )
+    beam_axis, beam_power = pupil_to_beam(pupil_axis, pupil_field, fft_size=256)
+
+    assert ellipticity_from_2d_gaussian(beam_axis, beam_power) == pytest.approx(
+        0.0,
+        abs=1.0e-6,
+    )
+
+
+def test_read_temp_output_calculates_fitted_ellipticity_frequency_stability(
+    tmp_path,
+    monkeypatch,
+):
+    export = tmp_path / "ellipticity.csv"
+    export.write_text("header\nrow\n", encoding="utf-8")
+    monkeypatch.setattr(
+        lib_objective,
+        "calculate_beam_ellipticities",
+        lambda path: {85.0: 0.1, 87.0: 0.2, 89.0: 0.4},
+    )
+
+    assert read_temp_output(export, "ellipticity") == pytest.approx(
+        np.std([0.1, 0.2, 0.4])
+    )
+
+
+def test_nan_final_ellipticity_is_replaced_by_its_configured_limit():
+    raw_outputs = {"ellipticity": math.nan}
     config = {
         "terms": [
             {
@@ -213,12 +276,11 @@ def test_nan_ellipticity_is_replaced_by_its_configured_limit(tmp_path):
         ]
     }
 
-    assert math.isnan(raw_outputs["ellipticity"])
     assert replace_nonfinite_objectives(raw_outputs, config) == {"ellipticity": 0.37}
     assert calculate_lp_fom(raw_outputs, config, p=2.0) == pytest.approx(1.0)
 
 
-def test_replace_nonfinite_objectives_preserves_finite_values():
+def test_replace_nonfinite_objectives_preserves_non_nan_values():
     config = {
         "terms": [
             {"column": "S11", "weight": 1.0, "target": -30.0, "limit": -20.0},
@@ -228,15 +290,7 @@ def test_replace_nonfinite_objectives_preserves_finite_values():
 
     assert replace_nonfinite_objectives(
         {"S11": -24.0, "Crosspol": float("inf")}, config
-    ) == {"S11": -24.0, "Crosspol": 0.05}
-
-
-def test_read_temp_output_rejects_zero_ellipticity_denominator(tmp_path):
-    export = tmp_path / "ellipticity.csv"
-    export.write_text("Freq,Phi0,Phi90\n80,-20,20\n", encoding="utf-8")
-
-    with pytest.raises(ValueError, match="sum to zero"):
-        read_temp_output(export, "ellipticity")
+    ) == {"S11": -24.0, "Crosspol": float("inf")}
 
 
 def test_read_temp_output_calculates_phasecenter_stability(tmp_path):
