@@ -12,6 +12,7 @@ import ScriptEnv
 # reliably import the adjacent lib_hfss_metrics module.
 C0 = 299792458.0
 ELLIPTICITY_FAR_FIELD_SETUP = "Ellipticity Sphere1"
+CROSSPOL_FAR_FIELD_SETUP = "Crosspol Sphere1"
 
 
 def numeric_values(start, stop, step):
@@ -387,7 +388,7 @@ def export_ellipticity_field():
     if os.path.exists(partial_path):
         os.remove(partial_path)
 
-    frequency_values = numeric_values(85.0, 175.0, 2.0)
+    frequency_values = numeric_values(80.0, 175.0, 5.0)
     try:
         with open(partial_path, "wb") as csv_file:
             writer = csv.writer(csv_file)
@@ -510,7 +511,7 @@ def _get_far_field_grid(frequency, theta_values, phi_values):
     result_array = oReportModule.GetSolutionDataPerVariation(
         "Far Fields",
         "Setup1 : Sweep",
-        ["Context:=", "Infinite Sphere1"],
+        ["Context:=", CROSSPOL_FAR_FIELD_SETUP],
         [
             "Theta:=", ["All"],
             "Phi:=", ["All"],
@@ -601,17 +602,17 @@ def _get_far_field_grid(frequency, theta_values, phi_values):
 
 
 def export_crosspol():
-    """Calculate Crosspol from 80 to 180 GHz at 5 GHz intervals."""
+    """Calculate Crosspol from 80 to 175 GHz at 5 GHz intervals."""
     output_path = temp_output_paths.get("Crosspol")
     if not output_path:
         printlog("[State] Skipping unconfigured output: Crosspol")
         return
 
-    frequency_values = numeric_values(80.0, 180.0, 5.0)
+    frequency_values = numeric_values(80.0, 175.0, 5.0)
     theta_values = numeric_values(-15.0, 15.0, 0.5)
     phi_values = numeric_values(0.0, 90.0, 1.0)
     rows = []
-    printlog("[State] Calculating Crosspol over 80-180 GHz in 5 GHz steps")
+    printlog("[State] Calculating Crosspol over 80-175 GHz in 5 GHz steps")
     for index, frequency_ghz in enumerate(frequency_values, 1):
         frequency = "{:g}GHz".format(frequency_ghz)
         grid = _get_far_field_grid(frequency, theta_values, phi_values)
@@ -942,6 +943,28 @@ def runSimulation():
                     "UseLocalCS:=", False,
                 ]
             )
+            if CROSSPOL_FAR_FIELD_SETUP in oRadFieldModule.GetChildNames():
+                printlog(
+                    "[State] Deleting existing far-field setup: {}".format(
+                        CROSSPOL_FAR_FIELD_SETUP
+                    )
+                )
+                oRadFieldModule.DeleteSetup([CROSSPOL_FAR_FIELD_SETUP])
+            oRadFieldModule.InsertInfiniteSphereSetup(
+                [
+                    "NAME:" + CROSSPOL_FAR_FIELD_SETUP,
+                    "UseCustomRadiationSurface:=", False,
+                    "CSDefinition:=", "Theta-Phi",
+                    "Polarization:=", "Linear",
+                    "ThetaStart:=", "-15deg",
+                    "ThetaStop:=", "15deg",
+                    "ThetaStep:=", "0.5deg",
+                    "PhiStart:=", "0deg",
+                    "PhiStop:=", "90deg",
+                    "PhiStep:=", "1deg",
+                    "UseLocalCS:=", False,
+                ]
+            )
 
             oProject.Save()
 
@@ -994,7 +1017,11 @@ def runSimulation():
 
                     if oRadFieldModule:
                         oRadFieldModule.DeleteSetup(
-                            ["Infinite Sphere1", ELLIPTICITY_FAR_FIELD_SETUP]
+                            [
+                                "Infinite Sphere1",
+                                ELLIPTICITY_FAR_FIELD_SETUP,
+                                CROSSPOL_FAR_FIELD_SETUP,
+                            ]
                         )
 
                     oDesign.DeleteFullVariation("All", False)
