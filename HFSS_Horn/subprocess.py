@@ -506,8 +506,8 @@ def export_ellipticity_field():
 
 
 def _get_far_field_grid(frequency, theta_values, phi_values):
-    """Read the GainL3 grid used by the verified Crosspol integration."""
-    expressions = ["GainL3Y", "GainTotal"]
+    """Read the GainL3 grid shared by Crosspol and boresight metrics."""
+    expressions = ["GainL3Y", "GainTotal", "GainL3X"]
     result_array = oReportModule.GetSolutionDataPerVariation(
         "Far Fields",
         "Setup1 : Sweep",
@@ -612,10 +612,12 @@ def export_crosspol():
     theta_values = numeric_values(-15.0, 15.0, 0.5)
     phi_values = numeric_values(0.0, 90.0, 1.0)
     rows = []
+    frequency_grids = []
     printlog("[State] Calculating Crosspol over 80-175 GHz in 5 GHz steps")
     for index, frequency_ghz in enumerate(frequency_values, 1):
         frequency = "{:g}GHz".format(frequency_ghz)
         grid = _get_far_field_grid(frequency, theta_values, phi_values)
+        frequency_grids.append((frequency_ghz, grid))
         integral_l3y = integrate_solid_angle(theta_values, phi_values, grid, 0)
         integral_total = integrate_solid_angle(theta_values, phi_values, grid, 1)
         if integral_total == 0.0:
@@ -630,6 +632,55 @@ def export_crosspol():
 
     _write_rows(output_path, ["Frequency_GHz", "Crosspol"], rows)
     printlog("[State] Exported Crosspol to: {}".format(output_path))
+    return frequency_grids
+
+
+def export_boresight(frequency_grids=None):
+    """Calculate co-polar boresight drop using the existing Crosspol sphere."""
+    output_path = temp_output_paths.get("boresight")
+    if not output_path:
+        printlog("[State] Skipping unconfigured output: boresight")
+        return
+
+    theta_values = numeric_values(-15.0, 15.0, 0.5)
+    phi_values = numeric_values(0.0, 90.0, 1.0)
+    if frequency_grids is None:
+        frequency_grids = []
+        for frequency_ghz in numeric_values(80.0, 175.0, 5.0):
+            frequency = "{:g}GHz".format(frequency_ghz)
+            grid = _get_far_field_grid(frequency, theta_values, phi_values)
+            frequency_grids.append((frequency_ghz, grid))
+
+    rows = []
+    for frequency_ghz, grid in frequency_grids:
+        frequency = "{:g}GHz".format(frequency_ghz)
+        gains = [
+            grid[(theta_deg, phi_deg)][2]
+            for theta_deg in theta_values
+            for phi_deg in phi_values
+        ]
+        g_boresight_values = [
+            grid[(0.0, phi_deg)][2]
+            for phi_deg in phi_values
+        ]
+        g_max = max(gains)
+        g0 = sum(g_boresight_values) / len(g_boresight_values)
+        if g_max <= 0.0:
+            raise RuntimeError(
+                "Invalid maximum GainL3X at {}".format(frequency)
+            )
+        if g0 <= 0.0:
+            boresight_drop_db = float("nan")
+        else:
+            boresight_drop_db = 10.0 * math.log10(g_max / g0)
+        rows.append((frequency_ghz, boresight_drop_db))
+
+    _write_rows(
+        output_path,
+        ["Frequency_GHz", "BoresightDrop_dB"],
+        rows,
+    )
+    printlog("[State] Exported boresight to: {}".format(output_path))
 
 
 def export_phasecenter():
@@ -995,7 +1046,8 @@ def runSimulation():
             export_reports()
             export_ellipticity_field()
             export_phasecenter()
-            export_crosspol()
+            frequency_grids = export_crosspol()
+            export_boresight(frequency_grids)
             publish_result_ready()
 
     except Exception as e:
