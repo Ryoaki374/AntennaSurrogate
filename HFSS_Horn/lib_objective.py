@@ -372,12 +372,12 @@ def calculate_beam_ellipticities(csv_path):
 def read_temp_output(csv_path, output_name):
     """Reduce an HFSS CSV export to the scalar used by the optimizer.
 
-    S11 uses the worst (maximum) in-band dB value. Crosspol uses its band
+    S11 and boresight use their worst (maximum) in-band dB values. Crosspol uses its band
     average. Ellipticity is calculated at each frequency by applying the F#
     pupil stop to complex rEL3X, taking its 2D FFT, and fitting the normalized
     main beam with a rotated 2D Gaussian. Those frequency values are reduced
-    to their population standard deviation. The phase-center report contains
-    the best z at each frequency and is reduced in the same way.
+    to their mean. The phase-center report contains the best z at each
+    frequency and is reduced to its population standard deviation.
     """
     if output_name == "ellipticity":
         ellipticities_by_frequency = calculate_beam_ellipticities(csv_path)
@@ -387,7 +387,7 @@ def read_temp_output(csv_path, output_name):
         ]
         if not ellipticities:
             raise ValueError("ellipticity CSV contains no frequency samples")
-        return _population_std(ellipticities)
+        return sum(ellipticities) / len(ellipticities)
 
     with open(csv_path, newline="", encoding="utf-8-sig") as csv_file:
         rows = list(csv.reader(csv_file))
@@ -400,11 +400,11 @@ def read_temp_output(csv_path, output_name):
     if output_name == "phasecenter":
         return _population_std([float(row[1]) for row in rows[1:]])
 
-    if output_name in ("S11", "Crosspol"):
+    if output_name in ("S11", "Crosspol", "boresight"):
         values = [float(row[-1]) for row in rows[1:]]
         if not all(math.isfinite(value) for value in values):
             return math.nan
-        if output_name == "S11":
+        if output_name in ("S11", "boresight"):
             return max(values)
         return sum(values) / len(values)
 

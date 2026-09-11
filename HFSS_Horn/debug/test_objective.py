@@ -89,7 +89,7 @@ def test_active_hfss_outputs_match_objective_terms():
 
     output_names = [output["name"] for output in config["io"]["temp_outputs"]]
     objective_columns = [term["column"] for term in config["objective"]["terms"]]
-    assert output_names == ["S11", "Crosspol", "ellipticity", "phasecenter"]
+    assert output_names == ["S11", "Crosspol", "ellipticity", "phasecenter", "boresight"]
     assert objective_columns == output_names
     assert config["objective"]["aggregation"] == "signed_l2"
     assert config["objective"]["reward_weight"] == pytest.approx(0.25)
@@ -98,6 +98,7 @@ def test_active_hfss_outputs_match_objective_terms():
         {"column": "Crosspol", "weight": 1.0, "target": 0.01, "limit": 0.05},
         {"column": "ellipticity", "weight": 1.0, "target": 0.05, "limit": 0.2},
         {"column": "phasecenter", "weight": 1.0, "target": 2.0, "limit": 5.0},
+        {"column": "boresight", "weight": 1.0, "target": 0.0, "limit": 1.0},
     ]
 
 
@@ -123,7 +124,8 @@ def test_subprocess_uses_dedicated_crosspol_grid_and_shared_frequency_sweep():
     assert '"ThetaStart:=", "-15deg"' in source
     assert '"ThetaStop:=", "15deg"' in source
     assert '"ThetaStep:=", "0.5deg"' in source
-    assert source.count("numeric_values(80.0, 175.0, 5.0)") == 2
+    assert source.count("numeric_values(80.0, 175.0, 5.0)") == 3
+    assert 'expressions = ["GainL3Y", "GainTotal", "GainL3X"]' in source
 
 
 def test_read_temp_output_calculates_phase_center_frequency_stability(tmp_path):
@@ -256,7 +258,7 @@ def test_circular_pupil_field_produces_circular_fitted_beam():
     )
 
 
-def test_read_temp_output_calculates_fitted_ellipticity_frequency_stability(
+def test_read_temp_output_calculates_fitted_ellipticity_band_mean(
     tmp_path,
     monkeypatch,
 ):
@@ -269,7 +271,7 @@ def test_read_temp_output_calculates_fitted_ellipticity_frequency_stability(
     )
 
     assert read_temp_output(export, "ellipticity") == pytest.approx(
-        np.std([0.1, 0.2, 0.4])
+        np.mean([0.1, 0.2, 0.4])
     )
 
 
@@ -315,3 +317,16 @@ def test_read_temp_output_calculates_phasecenter_stability(tmp_path):
 
     assert read_temp_output(export, "phasecenter") == pytest.approx((2.0 / 3.0) ** 0.5)
 
+
+
+def test_read_temp_output_uses_worst_boresight_drop_over_frequency(tmp_path):
+    export = tmp_path / "boresight.csv"
+    export.write_text(
+        "Frequency_GHz,BoresightDrop_dB\n"
+        "80,0.05\n"
+        "85,0.32\n"
+        "90,0.14\n",
+        encoding="utf-8",
+    )
+
+    assert read_temp_output(export, "boresight") == pytest.approx(0.32)
