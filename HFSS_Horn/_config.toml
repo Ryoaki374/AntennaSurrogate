@@ -22,6 +22,10 @@
     name = "phasecenter"
     filename = "temp_phasecenter_export.csv"
 
+    [[io.temp_outputs]]
+    name = "boresight"
+    filename = "temp_boresight_export.csv"
+
 # ------------------------------------------------------------  GP Hyperparams
 [opt]
     kernel_type     = "Matern52" # kernel name: RBF or Matern52
@@ -75,6 +79,13 @@
     # Population standard deviation of phase-center z over frequency, in mm.
     target = 2.0
     limit = 5.0
+
+    [[objective.terms]]
+    column = "boresight"
+    weight = 1.0
+    # Maximum co-polar boresight drop over frequency, in dB.
+    target = 0.0
+    limit = 1.0
 
 # ------------------------------------------------------------  HFSS simulation
 [hfss]
